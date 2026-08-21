@@ -24,8 +24,7 @@ Related source:
 | `plugin-sdk/VelaShell.PluginSdk.Build/` | The single NuGet package a plugin project references: MSBuild props/targets plus the bundled packer |
 | `tools/VelaShell.Plugin.Cli/` | The `vela-plugin` command line tool (validate/pack/sign/dev mount) |
 | `templates/` | `dotnet new` templates (`velaplugin` / `velaplugin-ui`) |
-| `plugins/` | First-party plugins, including the HelloWorld example |
-| `tests/` | Contract tests (container format / manifest parsing) and per-plugin unit tests |
+| `tests/` | Contract tests: `.vpx` container format and `plugin.json` manifest parsing |
 
 The host-side implementation lives in the **main repository** [joesdu/VelaShell](https://github.com/joesdu/VelaShell):
 `src/VelaShell.Infrastructure/Plugins/` (discovery/loading/activation/deactivation and capability bridging),
@@ -34,84 +33,29 @@ The host-side implementation lives in the **main repository** [joesdu/VelaShell]
 
 ## 2. Quick Start
 
-### 2.1 In-Repository Plugins (First-Party)
+### 2.1 Where the First-Party Plugins Live
 
-```text
-plugins/VelaShell.Plugin.Demo/
-├── VelaShell.Plugin.Demo.csproj
-├── plugin.json
-└── DemoPlugin.cs
-```
+The officially maintained plugins (AI / Redis / S3 / Telnet, plus the HelloWorld example) live in
+[joesdu/velashell-plugins](https://github.com/joesdu/velashell-plugins), not in this repository.
 
-csproj (`plugins/Directory.Build.props` centrally enables `EnableDynamicLoading` and `plugin.json` output; `VelaPluginId` drives copying to the application output directory after the build):
+**They take exactly the same path your own plugin does** — they reference
+`VelaShell.PluginSdk.Build` from nuget.org, with no in-repository privileges. So §2.2 below is the
+whole story; follow it and you are done. For real-world examples (protocol capabilities, panels,
+third-party dependencies shipped alongside the plugin), read any project under `plugins/` there.
 
-```xml
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <VelaPluginId>velashell.demo</VelaPluginId>
-  </PropertyGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\plugin-sdk\VelaShell.PluginSdk\VelaShell.PluginSdk.csproj"
-                      Private="false" ExcludeAssets="runtime" />
-  </ItemGroup>
-</Project>
-```
+That repository defines two extra things that only concern **shipping with the main application**.
+You will not need them for a third-party plugin, but you will run into them when reading its csproj files:
 
-plugin.json:
-
-```jsonc
-{
-  "id": "velashell.demo",              // <publisher>.<name>, lowercase [a-z0-9.-]
-  "version": "0.1.0",                  // semver
-  "displayName": "Demo",
-  "description": "Example",
-  "entry": "VelaShell.Plugin.Demo.dll", // Relative to the plugin directory; absolute paths and ".." are forbidden
-  "apiLevel": 1
-}
-```
-
-Entry class:
-
-```csharp
-using VelaShell.PluginSdk;
-
-[VelaPlugin]
-public sealed class DemoPlugin : IVelaPlugin
-{
-    public Task ActivateAsync(IPluginContext context, CancellationToken ct)
-    {
-        context.Log.Info("Demo activated.");
-        return Task.CompletedTask;
-    }
-
-    public Task DeactivateAsync(CancellationToken ct) => Task.CompletedTask;
-}
-```
-
-**Laid out automatically after each build**: `CopyVelaPluginToAppOutput` in `plugins/Directory.Build.targets` mirrors the plugin output (including `plugin.json`) to `artifacts/plugins/<directory name>/`. To have your local VelaShell pick up the latest build directly, point at its application directory — the output is mirrored there as well:
-
-```powershell
-$env:VELASHELL_DEV_APP_DIR = 'G:\VelaShell\src\VelaShell\bin\Debug\net11.0'
-dotnet build plugins/VelaShell.Plugin.Demo
-```
-
-(You can also pass `-p:VelaDevAppDir=<application directory>` on the command line. Before the repository split this path was hard-coded to `src/VelaShell/bin/...`; this repository has no host project, so you point at it yourself.)
-
-Finally, add the project to the `/plugins/` folder in `VelaShell.PluginToolchain.slnx` (for IDE visibility only).
-
-**Whether it ships in the installer** is controlled by `<VelaPluginShip>` (default `true`):
-
-```xml
-<!-- Example only, excluded from release packages: still mirrored locally so it can be loaded; the distribution bundle excludes it -->
-<VelaPluginShip>false</VelaPluginShip>
-```
-
-Plugins set to `true` are collected by the `Bundle` target in `build/PluginBundle.proj` (via each plugin's `GetVelaPluginPayload`) into `velashell-plugins-<version>.zip`, whose layout is exactly the `plugins/<directory name>/` level of the installer package; the main repository downloads and extracts it at release time (see [`release-process.md`](../docs/release-process.md)). The official example plugin `velashell.hello-world` sets this to `false`.
+- `<VelaPluginShip>` (default `true`): plugins set to `false` are excluded from
+  `velashell-plugins-<version>.zip` and only laid out locally as examples (the HelloWorld example is `false`);
+- after each build the output is mirrored to `artifacts/plugins/<directory name>/` and to the
+  application directory named by `VELASHELL_DEV_APP_DIR` — effectively a built-in `vela-plugin dev init`.
 
 > **Directory name = id with dots replaced by hyphens** (`velashell.ai` → `velashell-ai`). macOS `codesign`
 > treats directories containing dots inside an `.app` as nested bundles. Using the id unchanged as the directory name causes signing to fail directly
 > (`bundle format unrecognized, invalid, or unsuitable`). The directory name **does not participate in any logic**.
 > The host enumerates subdirectories and reads the id from `plugin.json`, so this is only a packaging-side naming convention.
+> Plugins the user installs from a `.vpx` into the data directory are still named by id (those live outside the `.app` and are not signed).
 
 ### 2.2 Plugins Outside the Repository (Third-Party): from `dotnet new` to installed in five minutes
 
@@ -482,7 +426,7 @@ Discipline:
 - Attach each control instance to only one panel; a panel is a live control and has no concept of refreshing the entire tree.
 - Localization is the plugin's responsibility: retrieve translations through `context.Host.Locale` and hot-update on `LocaleChanged`.
 - The host automatically closes all of a plugin's panels when the plugin is deactivated.
-- Complete example (compile-time AXAML + bilingual copy + session/remote execution integration): `plugins/VelaShell.Plugin.HelloWorld` (DemoPanelView.axaml).
+- Complete example (compile-time AXAML + bilingual copy + session/remote execution integration): [`plugins/VelaShell.Plugin.HelloWorld`](https://github.com/joesdu/velashell-plugins/tree/main/plugins/VelaShell.Plugin.HelloWorld) (DemoPanelView.axaml).
 
 ### 5.10 Secrets: Encrypted Secret Storage
 

@@ -1,10 +1,15 @@
 # VelaShell 插件工具链
 
 [VelaShell](https://github.com/joesdu/VelaShell) 的插件开发工具链:契约 SDK、测试替身、
-构建/打包支持、`vela-plugin` 命令行、`dotnet new` 模板,以及随主程序分发的第一方插件。
+构建/打包支持、`vela-plugin` 命令行、`dotnet new` 模板。
 
-主仓库 [joesdu/VelaShell](https://github.com/joesdu/VelaShell) 只放**主程序**;
-凡是插件作者会引用、会安装、会照抄的东西都在这里。
+三个仓库各管一摊,别串:
+
+| 仓库 | 管什么 |
+| --- | --- |
+| [joesdu/VelaShell](https://github.com/joesdu/VelaShell) | 主程序(宿主) |
+| **本仓库** | 插件 SDK 与工具链:凡是插件作者会引用、会安装、会照抄的东西 |
+| [joesdu/velashell-plugins](https://github.com/joesdu/velashell-plugins) | 第一方插件本身(AI / Redis / S3 / Telnet / HelloWorld 示例) |
 
 ## 仓库里有什么
 
@@ -15,8 +20,7 @@
 | `plugin-sdk/VelaShell.PluginSdk.Build` | 插件工程**只需引用这一个包**:MSBuild targets + 打包器 + Avalonia 版本锁 | NuGet `VelaShell.PluginSdk.Build` |
 | `tools/VelaShell.Plugin.Cli` | `vela-plugin`:校验清单、打 `.vpx`、签名/验签、挂载到本机宿主调试 | NuGet `VelaShell.Plugin.Cli`(dotnet tool) |
 | `templates/` | `dotnet new` 模板:`velaplugin`(基础)/ `velaplugin-ui`(带 Avalonia 面板) | NuGet `VelaShell.Plugin.Templates` |
-| `plugins/` | 第一方插件:AI 助手、Redis、S3、Telnet,以及示例插件 HelloWorld | Release 资产 `velashell-plugins-<版本>.zip` + 各自的 `.vpx` |
-| `tests/` | 契约测试(容器格式/清单解析)与各插件的单元测试 | — |
+| `tests/` | 契约测试:`.vpx` 容器格式与 `plugin.json` 清单解析 | — |
 | `scripts/` | `Set-Version.ps1`:把版本号写进仓库里所有落点(发版时由流水线自动跑) | — |
 
 ## 快速上手(写自己的插件)
@@ -48,25 +52,30 @@ dotnet test  VelaShell.PluginToolchain.slnx -c Debug
 当场 CS0122。本地没有 `VelaShell.snk` 也就构建不了 Release,这是预期的
 (密钥不入库,CI 从 `STRONG_NAME_KEY` 机密还原)。
 
-### 改插件时想立刻在真实宿主里看到效果
+### 改了 SDK,想在真实插件上试一下
 
-构建后插件输出会镜像到 `artifacts/plugins/<目录名>/`。要直接铺进本机 VelaShell,
-指一下应用目录即可:
+第一方插件在 [joesdu/velashell-plugins](https://github.com/joesdu/velashell-plugins),
+它从 nuget.org 引用本仓库发的包 —— 与第三方插件走的是同一条路,所以本地联调要先出包:
 
 ```powershell
-$env:VELASHELL_DEV_APP_DIR = 'G:\VelaShell\src\VelaShell\bin\Debug\net11.0'
-dotnet build plugins/VelaShell.Plugin.Redis
+# 本仓库:打一个带 -dev 后缀的版本
+foreach ($p in @('plugin-sdk/VelaShell.PluginSdk', 'plugin-sdk/VelaShell.PluginSdk.Build', 'plugin-sdk/VelaShell.PluginSdk.Testing')) {
+  dotnet pack "$p/$(Split-Path $p -Leaf).csproj" -c Release -o artifacts/nuget -p:VelaSdkVersion=1.5.0-dev
+}
+# 插件仓库:打开 nuget.config 里那条注释掉的本地源,然后
+dotnet build VelaShell.Plugins.slnx -p:VelaSdkVersion=1.5.0-dev
 ```
 
-或者用 `vela-plugin dev init` 把插件工程挂到宿主的开发插件根上(见 `docs/cli.md`)。
+或者用 `vela-plugin dev init` 把某个插件工程挂到宿主的开发插件根上(见 `docs/cli.md`)。
 
 ## 版本与发布
 
 SDK 版本(`Directory.Build.props` 的 `VelaSdkVersion`)与**主程序版本解耦** ——
 主程序发 1.2.3 不代表插件契约变了,插件作者也不该为了跟版本号而重新编译。
 
-发版方式:**在 GitHub 上发布 Release**(标签形如 `v1.4.0`),流水线会
-把五个包推上 nuget.org、把插件分发物挂到该 Release。
+发版方式:**在 GitHub 上发布 Release**(标签形如 `v1.4.0`),流水线会把五个包推上 nuget.org。
+第一方插件的分发物不在这里发 —— 那是 [joesdu/velashell-plugins](https://github.com/joesdu/velashell-plugins)
+自己的 Release 流水线的事。
 
 版本号**不用手工改**:流水线从标签解析出版本后,第一件事就是跑
 [`scripts/Set-Version.ps1`](scripts/Set-Version.ps1),把它写进 `Directory.Build.props`、

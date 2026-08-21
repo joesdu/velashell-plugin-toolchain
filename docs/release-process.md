@@ -1,12 +1,15 @@
 # 发版流程
 
-本仓库一次发布同时产出两类东西,共用同一个版本号:
+本仓库一次发布产出五个 NuGet 包,共用同一个版本号:
 
 | 产物 | 去处 | 谁消费 |
 | --- | --- | --- |
-| 五个 NuGet 包 | nuget.org | 插件作者(`dotnet new` / `PackageReference`)、VelaShell 主仓库 |
-| `velashell-plugins-<版本>.zip` | 本仓库 Release 资产 | VelaShell 主仓库的发布流水线(解进安装包的 `plugins/`) |
-| 各插件的 `.vpx` | 本仓库 Release 资产 | 用户手工安装、插件商店 |
+| 五个 NuGet 包 | nuget.org | 插件作者(`dotnet new` / `PackageReference`)、VelaShell 主仓库、第一方插件仓库 |
+
+> 第一方插件的分发物(`velashell-plugins-<版本>.zip` 与各插件的 `.vpx`)**不在这里发** ——
+> 插件已搬去 [joesdu/velashell-plugins](https://github.com/joesdu/velashell-plugins),
+> 那个仓库有自己的 Release 流水线与自己的版本号(`VelaPluginsVersion`)。
+> 两边解耦:SDK 发 1.5.0 不代表插件必须跟着发,插件发 1.4.1 也不代表契约动了。
 
 ## 一、怎么发
 
@@ -49,10 +52,8 @@ GitHub → Releases → Draft a new release
 5. `dotnet pack` 五个包,版本经 `-p:VelaSdkVersion=` 覆盖。
 6. **模板端到端冒烟**:装模板 → 生成工程 → 还原 → 构建 → 出 `.vpx` → 用刚打出的
    CLI 读回容器 → 确认共享程序集没漏进插件输出目录。
-7. 打插件分发包与各插件的 `.vpx`。
-8. NuGet 可信发布换密钥 → 推送五个包。
-9. 插件分发物 `gh release upload --clobber` 挂到该 Release。
-10. `sync-main` 任务把第 2 步那些改动**以 PR 的形式回写 main**,分支 `chore/version-<版本>`,
+7. NuGet 可信发布换密钥 → 推送五个包。
+8. `sync-main` 任务把第 2 步那些改动**以 PR 的形式回写 main**,分支 `chore/version-<版本>`,
     等你手动合。单独一个 job:上面的工作区检出在标签上、且已被构建产物弄脏,在那里切 main
     会把两者搅在一起;这里从干净的 main 重跑一遍脚本,结果逐字节相同 —— 脚本是纯函数。
     分支名由版本号决定,所以手动补跑同一个标签会**刷新同一个 PR**,不会攒出一堆。
@@ -187,19 +188,19 @@ CI(`ci.yml`)每次 push/PR 都会跑一遍 `-Check`:有人手改了 `Directory.B
 
 ## 四、和主仓库的联动
 
-主仓库 [joesdu/VelaShell](https://github.com/joesdu/VelaShell) 通过两个 pin 消费本仓库:
+主仓库 [joesdu/VelaShell](https://github.com/joesdu/VelaShell) 通过一个 pin 消费本仓库:
 
 ```xml
 <!-- 主仓库 Directory.Build.props -->
-<VelaSdkVersion>1.4.0</VelaSdkVersion>              <!-- SDK 包版本 -->
-<VelaPluginsBundleVersion>1.4.0</VelaPluginsBundleVersion>  <!-- 插件分发包所在的 Release 标签 -->
+<VelaSdkVersion>1.4.0</VelaSdkVersion>              <!-- SDK 包版本(本仓库) -->
+<VelaPluginsBundleVersion>1.4.0</VelaPluginsBundleVersion>  <!-- 插件分发包所在的 Release 标签(velashell-plugins 仓库) -->
 ```
 
-所以顺序是:**先发本仓库的 Release,再去主仓库把两个 pin 抬上去**。
-主仓库发版时会从
-`https://github.com/joesdu/velashell-plugin-toolchain/releases/download/v<版本>/velashell-plugins-<版本>.zip`
-下载插件分发包解进安装包的 `plugins/`;这个地址取不到东西,主仓库的发布会直接失败,
-不会悄悄出一个没插件的包。
+第二个 pin 指的是 [joesdu/velashell-plugins](https://github.com/joesdu/velashell-plugins)
+的 Release,与本仓库无关 —— 别把两个版本号看成必须一致的一对。
+
+所以顺序是:**先发本仓库的 Release,再去主仓库把 `VelaSdkVersion` 抬上去**;
+插件那条线各走各的。
 
 主仓库还会在构建期核对自己引用的 Avalonia 与 SDK 锁定的版本是否一致
 (`VerifyAvaloniaMatchesSdk`,读的是 `VelaShell.PluginSdk` 包导出的

@@ -131,11 +131,3 @@ jobs:
             dotnet new uninstall VelaShell.Plugin.Templates
           }
 
-      # 插件分发包也在 CI 里打一遍:主仓库的发布链路依赖它的布局,
-      # 布局在这里坏掉的话,发现的时机应该是现在,而不是主程序发版当天。
-      - name: Build first-party plugin bundle
-        shell: pwsh
-        run: |
-          dotnet build build/PluginBundle.proj -c Release -t:Bundle -p:BundleDir="$PWD/artifacts/plugins-bundle" --nologo $env:VELA_SIGN_ARGS
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Get-ChildItem artifacts/plugins-bundle | Select-Object -ExpandProperty Name
