@@ -24,6 +24,15 @@
 #      · 预发布可以用 Release 的 prerelease 勾选表达,不必再靠版本号后缀去猜。
 #    标签名带不带 v 前缀都行(下面会 TrimStart),建议统一 `v1.4.0`。
 #
+# 📌 版本号不用手工改了(2026-08-21 起):标签解析出来之后,流水线**第一件事**就是跑
+#    scripts/Set-Version.ps1,把该版本写进 Directory.Build.props、两个模板的
+#    template.json、VelaPluginApi.SdkVersion 以及四份文档的版本横幅/PackageReference 片段。
+#    发布成功后由 sync-main 任务开一个 PR 把这些改动回写 main(等你手动合)。所以发版只剩三步:
+#      ① 破坏性变更才需要先手工 +1 VelaPluginApi.Level(改没改是人的判断,脚本会核对但不代改)
+#      ② 合进 main
+#      ③ 在 GitHub 上发 Release,标签填 v<版本>
+#    发完之后会多出一个 chore/version-<版本> 的 PR,内容就是那些版本号替换 —— 合掉即可。
+#
 # 推送用 **NuGet Trusted Publishing(OIDC)**,不存 API Key:
 #   NuGet/login 拿本次运行的 GitHub OIDC 令牌去 nuget.org 换一把**短时效**的推送密钥,
 #   用完即弃。密钥不落仓库机密,也就没有"泄漏了要轮换"这件事。
@@ -33,6 +42,9 @@
 # 需要的仓库机密:
 #   STRONG_NAME_KEY   与 VelaShell 主仓库**同一把**:Release 下 SDK 程序集要强名称签名,
 #                     否则宿主(已签名)引用不了它。(推送本身不再需要任何机密。)
+#   VERSION_SYNC_TOKEN(可选)细粒度 PAT(contents + pull requests 写权限)。不配就用
+#                     GITHUB_TOKEN,一切照常 —— 唯一区别是 GITHUB_TOKEN 开出来的
+#                     版本同步 PR 不会触发 CI(GitHub 防工作流自循环的既定行为)。
 #
 # 发布前会先跑全量测试与**模板端到端冒烟**(装模板 → 生成工程 → 还原 → 构建 → 出 .vpx)。
 # 那一步不是形式:插件工程是仓库外环境,仓库内的 Directory.Build.props 一条也吃不到 ——
@@ -66,6 +78,10 @@ permissions:
 jobs:
   publish:
     runs-on: windows-latest
+    # 供 sync-main 回写时复用,免得把标签解析逻辑抄第二遍。
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -88,6 +104,21 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
           Write-Host "Publishing version $version (tag $tag)"
+
+      # ── 把标签里的版本号写进仓库 ─────────────────────────────────────────────
+      # 发版清单里"改 Directory.Build.props、改两个 template.json、改 VelaPluginApi.SdkVersion、
+      # 改四份文档的版本横幅与 PackageReference 片段"这七八处,以前全靠人在合 main 之前记着改。
+      # 漏一处的后果并不对称:模板漏了会在插件作者的构建期炸 VELA1004;
+      # VelaPluginApi.SdkVersion 漏了**什么都不会报错**,只是 `vela-plugin doctor` 从此
+      # 汇报一个错的宿主 SDK 版本。所以这件事交给脚本,并且放在**构建之前的第一步** ——
+      # 产物因此永远与 Release 标签一致,与仓库里当时提交了什么无关。
+      # 改动会在发布成功后由 sync-main 任务以 PR 形式回写 main(见文件末尾),等人合。
+      - name: Stamp version into the repo
+        shell: pwsh
+        run: |
+          & ./scripts/Set-Version.ps1 '${{ steps.version.outputs.version }}'
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git --no-pager diff --stat
 
       # 强名称密钥。缺了它 Release 构建会在 CSC 那一步失败(找不到 .snk),
       # 而那条报错离根因很远 —— 这里先给一句人话。
@@ -252,3 +283,99 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # ── 把版本号回写 main(以 PR 的形式)────────────────────────────────────────
+  # 上面那个 Stamp 步骤只改了 runner 上的工作区 —— 包已经发出去了,但仓库里的
+  # Directory.Build.props / template.json / VelaPluginApi.SdkVersion / 四份文档
+  # 还停在上一版。不回写的话,下一个克隆仓库的人看到的版本号是错的,
+  # 而且 CI 的 `Set-Version.ps1 -Check` 会一直红着。
+  #
+  # **开 PR 而不是直推 main**:main 迟早要开分支保护,直推那条路会被挡死;而且
+  # 版本号回写是"机器人改了你仓库里的代码",过一遍 PR 让人看一眼再合,本来就更合适。
+  # 分支名 chore/version-<版本> 是确定的,所以手动补跑同一个标签会更新同一个 PR,
+  # 不会攒出一堆。
+  #
+  # 单独一个 job 而不是接在 publish 后面:publish 的工作区检出在**标签**上、
+  # 且已被构建产物弄脏,在那里 checkout main 会把两者搅在一起。这里从干净的
+  # main 重新跑一遍脚本,结果与 publish 里那次逐字节相同(脚本是纯函数)。
+  sync-main:
+    needs: publish
+    if: ${{ !inputs.dryRun }}
+    runs-on: ubuntu-latest
+    # job 级 permissions 会**整体覆盖**工作流级的那份,所以 contents 要重写一遍;
+    # 这个 job 用不到 id-token(不推 nuget.org),顺手收窄。
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # VERSION_SYNC_TOKEN 是**可选**的:没配就用 github.token,一切照常,唯一区别是
+      # GITHUB_TOKEN 开出来的 PR **不会触发 CI**(GitHub 防工作流自循环的既定行为)。
+      # 那条 PR 的内容是纯版本号替换、且刚在上面的发布里全量验过,合并时 main 上的
+      # push 又会正常跑一遍 CI,所以不配也是安全的。想让 PR 本身也亮绿灯,
+      # 配一个有 contents+pull-requests 权限的 PAT 即可。
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          token: ${{ secrets.VERSION_SYNC_TOKEN || github.token }}
+
+      - name: Open version-sync PR
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.VERSION_SYNC_TOKEN || github.token }}
+        run: |
+          $version = '${{ needs.publish.outputs.version }}'
+          $branch = "chore/version-$version"
+
+          & ./scripts/Set-Version.ps1 $version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+          if (-not (git status --porcelain)) {
+            Write-Host "::notice::main 里的版本号已经是 $version,无需回写。"
+            exit 0
+          }
+
+          # 回写失败不该让一次已经成功的发布显示成红的 —— 包在 nuget.org 上、资产在
+          # Release 上,都已经是既成事实。这里整段降级成警告,把手工补救的命令给出来。
+          #
+          # try/catch 与 $LASTEXITCODE 两道都要:GitHub 给 pwsh 步骤预置了
+          # $ErrorActionPreference='stop',而 PowerShell 7.4 起
+          # $PSNativeCommandUseErrorActionPreference 默认为 true —— 原生命令返回非零会
+          # **抛异常**,只写 if ($LASTEXITCODE) 的话根本走不到。
+          try {
+            git config user.name  'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git checkout -b $branch
+            git commit -am "chore: 版本号同步到 $version"
+            # --force:分支名由版本号决定,补跑时内容是从干净 main 重新生成的,
+            # 强推等于"把这个 PR 刷新到最新",不存在要保留的历史。
+            git push --force origin $branch
+            if ($LASTEXITCODE -ne 0) { throw "推送 $branch 失败。" }
+
+            # `// empty` 不是装饰:没有匹配的 PR 时 `.[0].url` 求值为 null,而 jq 会把它
+            # 原样打成字符串 "null" —— 在 PowerShell 里那是**真值**,会让下面误判成"PR 已存在"。
+            $existing = gh pr list --head $branch --state open --json url --jq '.[0].url // empty'
+            if ($existing) {
+              Write-Host "::notice::版本同步 PR 已存在,已刷新到最新:$existing"
+              exit 0
+            }
+
+            # 不用 here-string:YAML 块标量里每行都带缩进,而 PowerShell 要求 @" 的
+            # 结束符顶格,两者不可调和。用数组拼。
+            $body = @(
+              "本次发布(``$version``)的版本号回写。由 ``.github/workflows/release.yml`` 的 sync-main 任务生成。"
+              ""
+              "内容是 ``pwsh scripts/Set-Version.ps1 $version`` 的输出 —— 纯版本号替换,不含任何其它改动。"
+              "同一份改动已经在发布流水线里构建、测试、模板端到端冒烟全过一遍了(包也已经推上 nuget.org)。"
+              ""
+              "**合掉它**,否则 CI 的版本同步体检(``Set-Version.ps1 -Check``)会一直红着,"
+              "而且下一个克隆仓库的人看到的版本号是错的。"
+            ) -join "`n"
+
+            $url = gh pr create --base main --head $branch --title "chore: 版本号同步到 $version" --body $body
+            if ($LASTEXITCODE -ne 0) { throw "gh pr create 失败。" }
+            Write-Host "::notice::已开出版本同步 PR:$url"
+          } catch {
+            Write-Host $_.Exception.Message
+            Write-Host "::warning::版本号回写 PR 没能开出来。发布本身已成功;请在本地跑 ``pwsh scripts/Set-Version.ps1 $version`` 后自行提 PR 合进 main,否则 CI 的版本同步体检会一直失败。"
+            exit 0
+          }

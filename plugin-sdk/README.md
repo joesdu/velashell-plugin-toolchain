@@ -37,8 +37,15 @@ VelaShell 插件开发 SDK 的源代码。对外以 NuGet 包分发,版本走 `V
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) 打全部五个包、
 跑全量测试与**模板端到端冒烟**,再推 nuget.org,并把第一方插件的分发物挂到该 Release。
 
-> 2026-08-21 之前是打 `sdk-v<版本>` 标签触发。改成 Release 是因为插件分发包必须挂在
-> 某个 Release 上才有稳定下载地址(主仓库要按版本取它),而打标签本身不产生 Release。
+版本号**不用手工改**:流水线从标签解析出版本后,第一件事就是跑
+[`scripts/Set-Version.ps1`](../scripts/Set-Version.ps1) 把它写进 `Directory.Build.props`、
+两个模板的 `template.json`、`VelaPluginApi.SdkVersion` 与四份文档,发布成功后开一个 PR 回写 main、等你手动合。
+唯一还要人动手的是**破坏性变更时 `VelaPluginApi.Level` +1** —— 脚本会核对
+"SDK 主版本 == apiLevel",对不上就拒绝发版,但不代你做那个判断。
+
+> 2026-08-21 之前是打 `sdk-v<版本>` 标签触发,且上面那十来处版本号全靠人记着改。
+> 改成 Release 是因为插件分发包必须挂在某个 Release 上才有稳定下载地址
+> (主仓库要按版本取它),而打标签本身不产生 Release。
 
 推送走 **NuGet Trusted Publishing(OIDC)**,不存 API Key。仓库机密只剩
 `STRONG_NAME_KEY`(SDK 程序集的强名称签名)。

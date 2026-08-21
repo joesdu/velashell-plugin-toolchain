@@ -34,14 +34,16 @@
 
 ## 发版
 
-发一次 SDK 的完整步骤
+发一次 SDK 的完整步骤：
 
-- 改 Directory.Build.props 的 VelaSdkVersion
-- 改 templates/content/velaplugin/.template.config/template.json     的 sdkVersion.defaultValue
-  改 templates/content/velaplugin-ui/.template.config/template.json  同上（破坏性变更还要 +1 VelaPluginApi.Level）
+- **破坏性变更才需要**：手工把 `VelaPluginApi.Level` +1（脚本会核对"SDK 主版本 == apiLevel"，
+  但刻意不代改 —— 契约破没破是人的判断）
 - 合进 main
 - 在 GitHub 上发布 Release，标签 `v<版本>`（2026-08-21 起不再用 `sdk-v*` 标签）
 
-第 2 步不是可选的 —— VELA1004 会在构建期拦下。想先验一遍不推送,用 workflow_dispatch 勾 dryRun。
+版本号**不用手工改**：流水线解析出标签后第一件事就是跑
+[`scripts/Set-Version.ps1`](../../scripts/Set-Version.ps1)，把它写进 `Directory.Build.props`、
+两个模板的 `template.json`、本目录的 `VelaPluginApi.SdkVersion` 以及四份文档，
+发布成功后开一个 PR 回写 main（分支 `chore/version-<版本>`），等你手动合。想先验一遍不推送，用 workflow_dispatch 勾 dryRun。
 
 完整流程与 nuget.org 可信发布的配置见 [docs/release-process.md](../../docs/release-process.md)。

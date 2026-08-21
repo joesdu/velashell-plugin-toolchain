@@ -17,6 +17,7 @@
 | `templates/` | `dotnet new` 模板:`velaplugin`(基础)/ `velaplugin-ui`(带 Avalonia 面板) | NuGet `VelaShell.Plugin.Templates` |
 | `plugins/` | 第一方插件:AI 助手、Redis、S3、Telnet,以及示例插件 HelloWorld | Release 资产 `velashell-plugins-<版本>.zip` + 各自的 `.vpx` |
 | `tests/` | 契约测试(容器格式/清单解析)与各插件的单元测试 | — |
+| `scripts/` | `Set-Version.ps1`:把版本号写进仓库里所有落点(发版时由流水线自动跑) | — |
 
 ## 快速上手(写自己的插件)
 
@@ -65,8 +66,21 @@ SDK 版本(`Directory.Build.props` 的 `VelaSdkVersion`)与**主程序版本解�
 主程序发 1.2.3 不代表插件契约变了,插件作者也不该为了跟版本号而重新编译。
 
 发版方式:**在 GitHub 上发布 Release**(标签形如 `v1.4.0`),流水线会
-把五个包推上 nuget.org、把插件分发物挂到该 Release。完整流程、版本号纪律
-(`AssemblyVersion` 主版本 == `apiLevel`)与 NuGet 可信发布的配置见
+把五个包推上 nuget.org、把插件分发物挂到该 Release。
+
+版本号**不用手工改**:流水线从标签解析出版本后,第一件事就是跑
+[`scripts/Set-Version.ps1`](scripts/Set-Version.ps1),把它写进 `Directory.Build.props`、
+两个模板的 `template.json`、`VelaPluginApi.SdkVersion` 与四份文档的版本横幅 /
+`PackageReference` 片段。发布成功后**开一个 PR** 把改动回写 `main`
+(分支 `chore/version-<版本>`),等你手动合 —— main 开了分支保护也照常工作。
+本地也可以先跑一遍:
+
+```powershell
+pwsh scripts/Set-Version.ps1 1.5.0            # 落盘
+pwsh scripts/Set-Version.ps1 1.5.0 -Check     # 只报告(CI 每次 push/PR 都跑这个)
+```
+
+完整流程、版本号纪律(`AssemblyVersion` 主版本 == `apiLevel`)与 NuGet 可信发布的配置见
 [`docs/release-process.md`](docs/release-process.md)。
 
 ## 与主程序的两个硬约束

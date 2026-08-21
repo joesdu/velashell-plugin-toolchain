@@ -10,7 +10,14 @@
 
 ## 一、怎么发
 
-**发 Release,不再打 `sdk-v*` 标签。**
+**发 Release,不再打 `sdk-v*` 标签;版本号也不用再手工改。**
+
+发版只剩三步,外加事后合一个 PR:
+
+1. **破坏性变更才需要**先手工把 `VelaPluginApi.Level` +1 —— "契约破没破"是人的判断,
+   不是版本号能推出来的,脚本刻意不代改(但会核对,对不上就拒绝发版)。
+2. 合进 `main`。
+3. 在 GitHub 上发 Release:
 
 ```
 GitHub → Releases → Draft a new release
@@ -21,21 +28,51 @@ GitHub → Releases → Draft a new release
   Publish release
 ```
 
+4. 发布跑完后仓库里会多出一个 PR:`chore: 版本号同步到 <版本>`(分支
+   `chore/version-<版本>`)。内容就是那十来处版本号替换,**合掉它**。
+
+> 2026-08-21 之前还要手工改 `Directory.Build.props`、两个 `template.json`、
+> `VelaPluginApi.SdkVersion` 和四份文档共十来处版本号。现在这些由流水线
+> 从标签自动写入,再以 PR 的形式回写 `main`(见下面第 2 步与第 10 步)。
+
 发布动作触发 [`.github/workflows/release.yml`](../.github/workflows/release.yml),它按顺序做:
 
 1. 解析并**校验**版本号 —— 标签必须能化成合法 SemVer。这一步是硬拦截:
    nuget.org 的包版本**不可删除、不可覆盖**,标签打错一次就永久占掉一个版本号。
-2. 从 `STRONG_NAME_KEY` 机密还原 `VelaShell.snk`。
-3. 跑全量测试(`-c Debug`,理由见下方"为什么测试必须 Debug")。
-4. `dotnet pack` 五个包,版本经 `-p:VelaSdkVersion=` 覆盖。
-5. **模板端到端冒烟**:装模板 → 生成工程 → 还原 → 构建 → 出 `.vpx` → 用刚打出的
+2. **把版本号写进仓库**:跑 [`scripts/Set-Version.ps1`](../scripts/Set-Version.ps1),
+   把标签里那个版本落到 `Directory.Build.props`、两个模板的 `template.json`、
+   `VelaPluginApi.SdkVersion` 以及四份文档的版本横幅/`PackageReference` 片段
+   (详见下方"版本号纪律")。放在构建之前的第一步,产物因此**永远与标签一致**,
+   与仓库里当时提交了什么无关。
+3. 从 `STRONG_NAME_KEY` 机密还原 `VelaShell.snk`。
+4. 跑全量测试(`-c Debug`,理由见下方"为什么测试必须 Debug")。
+5. `dotnet pack` 五个包,版本经 `-p:VelaSdkVersion=` 覆盖。
+6. **模板端到端冒烟**:装模板 → 生成工程 → 还原 → 构建 → 出 `.vpx` → 用刚打出的
    CLI 读回容器 → 确认共享程序集没漏进插件输出目录。
-6. 打插件分发包与各插件的 `.vpx`。
-7. NuGet 可信发布换密钥 → 推送五个包。
-8. 插件分发物 `gh release upload --clobber` 挂到该 Release。
+7. 打插件分发包与各插件的 `.vpx`。
+8. NuGet 可信发布换密钥 → 推送五个包。
+9. 插件分发物 `gh release upload --clobber` 挂到该 Release。
+10. `sync-main` 任务把第 2 步那些改动**以 PR 的形式回写 main**,分支 `chore/version-<版本>`,
+    等你手动合。单独一个 job:上面的工作区检出在标签上、且已被构建产物弄脏,在那里切 main
+    会把两者搅在一起;这里从干净的 main 重跑一遍脚本,结果逐字节相同 —— 脚本是纯函数。
+    分支名由版本号决定,所以手动补跑同一个标签会**刷新同一个 PR**,不会攒出一堆。
+    整段失败(权限、网络等)降级为**警告**而不是失败 —— 包已经在 nuget.org 上了,
+    那是既成事实,不该把一次成功的发布显示成红的。此时按提示在本地跑一遍脚本自行提 PR 即可。
 
 手动兜底:Actions 页面 → Release → Run workflow,填标签即可补跑
 (推送用 `--skip-duplicate`、上传用 `--clobber`,重复跑幂等)。勾 `dryRun` 只验不推。
+
+### 版本同步 PR 与 CI(可选的 `VERSION_SYNC_TOKEN`)
+
+`sync-main` 默认用 `GITHUB_TOKEN` 开 PR。GitHub 有一条防工作流自循环的既定规则:
+**用 `GITHUB_TOKEN` 开的 PR 不会触发 CI**,所以那个 PR 上是空的检查列表。
+
+不配也是安全的 —— 那条 PR 的内容是纯版本号替换,且刚在上面的发布里全量构建、测试、
+模板端到端冒烟过一遍;合并时 `main` 上的 push 由你的账号触发,CI 会正常跑。
+
+想让 PR 本身也亮绿灯(比如 main 的分支保护要求"必须有通过的检查才能合"),
+配一个仓库机密 `VERSION_SYNC_TOKEN`:一把有 `contents: write` + `pull requests: write`
+权限的细粒度 PAT 即可,工作流会自动优先用它。
 
 ### 从旧的打标签方式迁移过来的注意点
 
@@ -113,11 +150,40 @@ nuget.org 在**第一次成功发布**时会把 GitHub 的 repository ID 与 own
 (纪律:`AssemblyVersion` 主版本 == `apiLevel`)。这样老宿主在**发现期**就按 `apiLevel`
 干净拒载,而不是等装载时抛一个看不懂的绑定异常。
 
-### 发新版时要一起改的地方
+### 版本号的落点(由脚本统一维护)
 
-* `Directory.Build.props` 的 `VelaSdkVersion`(默认值,PR 验证用它)
-* `templates/content/*/.template.config/template.json` 的 `sdkVersion` 默认值 ——
-  忘了改的话生成出来的工程会去还原旧包。构建期由 `VerifyTemplateSdkVersion`(VELA1004)拦下。
+[`scripts/Set-Version.ps1`](../scripts/Set-Version.ps1) 是这些落点的唯一权威:
+
+| 落点 | 漏改的后果 |
+| --- | --- |
+| `Directory.Build.props` 的 `VelaSdkVersion` | 包版本的默认值,PR 验证用它 |
+| `templates/content/velaplugin{,-ui}/.template.config/template.json` 的 `sdkVersion.defaultValue` | 生成出来的工程去还原旧包;构建期由 `VerifyTemplateSdkVersion`(VELA1004)拦下 |
+| `plugin-sdk/VelaShell.PluginSdk/VelaPluginApi.cs` 的 `SdkVersion` | **什么都不会报错** —— 只是 `vela-plugin doctor` 从此汇报一个错的宿主 SDK 版本,插件的 `minSdkVersion` 门槛跟着判错 |
+| `docs{,-en}/cli.md`、`docs{,-en}/sdk-reference.md` 的版本横幅 | 不影响功能,但过期版本号会被人照抄 |
+| `docs{,-en}/dev-guide.md`、`docs{,-en}/sdk-reference.md` 的 `PackageReference` 片段 | 同上,而且是最容易被整段复制走的那一段 |
+
+发版时由流水线自动写(见"怎么发"第 2 步),平时也可以本地先跑一遍再提交 ——
+那样发版时脚本就是个空操作:
+
+```powershell
+pwsh scripts/Set-Version.ps1 1.5.0            # 落盘
+pwsh scripts/Set-Version.ps1 1.5.0 -Check     # 只报告,不同步就退出码 1
+```
+
+几条刻意的设计:
+
+* **锚定上下文匹配,不做"全局替换旧版本号"**。后者会误伤示例输出里那些碰巧等于当前
+  版本的数字 —— `docs/cli.md` 里 `1.4.2  api 1  sdk 1.4.0 …` 那行的 `1.4.2` 是**宿主**
+  版本,与 SDK 版本无关,不该跟着动。
+* **模式失配就直接失败**,不静默跳过。文件结构改了而脚本没跟上时,静默跳过等于把
+  "漏改一处"原样放回来 —— 那正是这个脚本要消灭的东西。
+* **不自动改 `VelaPluginApi.Level`**,只核对"SDK 主版本 == apiLevel"。破没破契约是人的
+  判断;但判断做完之后忘了落到代码里是完全可能的,所以在这里挡住。
+* **保留各文件原有的 BOM 状态**(`.cs` 带、`.props/.json/.md` 不带),否则 diff 里会多出
+  一堆与版本号无关的整文件改动。
+
+CI(`ci.yml`)每次 push/PR 都会跑一遍 `-Check`:有人手改了 `Directory.Build.props` 却没动
+模板和文档,或者发版那次的版本同步 PR 一直没合,都会在这里显形。
 
 ## 四、和主仓库的联动
 

@@ -41,6 +41,16 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Validating version $version"
 
+      # 版本号同步体检。发版时由 release.yml 自动写(scripts/Set-Version.ps1),但仓库自己
+      # 也得保持诚实:有人手改了 Directory.Build.props 却没动模板/文档,或者发版那次的版本同步 PR
+      # 一直没合 —— 两种情况都在这里显形,而不是等到下次有人照着过期文档抄版本号。
+      # 顺带核对「SDK 主版本 == VelaPluginApi.Level」这条纪律。
+      - name: Version consistency check
+        shell: pwsh
+        run: |
+          & ./scripts/Set-Version.ps1 '${{ steps.version.outputs.version }}' -Check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # 来自 fork 的 PR 拿不到仓库机密(GitHub 的既定行为),此时**关掉签名**继续跑 ——
       # 这条路径要验的是"包能不能打出来、模板能不能用",与签名无关;
       # 而不关的话 CSC 会因为找不到 .snk 直接失败,PR 作者只会看到一条与他改动无关的报错。
