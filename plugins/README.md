@@ -1,0 +1,56 @@
+# plugins/ —— 第一方插件
+
+本目录存放官方维护的插件,每个插件一个子目录(独立 csproj)。
+SDK 契约见 [plugin-sdk/](../plugin-sdk/),开发文档见 [docs/dev-guide.md](../docs/dev-guide.md)。
+
+## 现有插件
+
+| 目录 | id | 随包分发 | 装载模式 | 说明 |
+| --- | --- | --- | --- | --- |
+| [VelaShell.Plugin.HelloWorld](VelaShell.Plugin.HelloWorld/) | `velashell.hello-world` | 否 | 隔离进程 | 官方示例:SDK 各能力的最小用法 |
+| [VelaShell.Plugin.Ai](VelaShell.Plugin.Ai/) | `velashell.ai` | 是 | 进程内 | AI 助手:多提供商流式对话 + Agent 模式(读终端/执行命令带审批)+ 自定义 MCP 服务器 |
+| [VelaShell.Plugin.Redis](VelaShell.Plugin.Redis/) | `velashell.redis` | 是 | 进程内 | Redis 客户端:键浏览、类型化查看与编辑、命令执行 |
+| [VelaShell.Plugin.S3](VelaShell.Plugin.S3/) | `velashell.s3` | 是 | 进程内 | S3 兼容对象存储:协议 + 桶管理器 + 对象检视器(协议能力域的首个使用者) |
+| [VelaShell.Plugin.Telnet](VelaShell.Plugin.Telnet/) | `velashell.telnet` | 是 | 进程内 | RFC 854 Telnet 终端:选项协商 + NAWS + 8 位透明(**终端**协议能力的首个使用者) |
+
+装载模式由 `plugin.json` 的 `hostMode` 决定(`isolated` / `inProcess`,默认进程内)。
+隔离插件跑在独立的 `VelaShell.PluginHost` 进程里(实现在主仓库),崩溃不波及宿主;
+AI 插件因为要用宿主的 AvaloniaEdit 作输入框(隔离进程里没有这个程序集)必须进程内装载;
+S3 插件则是因为**协议能力只在进程内可用** —— 协议是宿主反向调用插件的高频通道,
+隔离进程的 RPC 只承载插件→宿主方向(清单校验会直接拒绝 protocols + isolated 的组合)。
+
+## 分发
+
+"随包分发"由 csproj 的 `<VelaPluginShip>` 控制(默认 `true`)。示例插件设 `false`:
+本机构建仍会镜像到 `artifacts/plugins/`(以及 `VELASHELL_DEV_APP_DIR` 指定的应用目录),
+装载起来验证插件系统没问题,但它不会进 `velashell-plugins-<版本>.zip` ——
+它是给开发者读的范例,不是给用户装的功能。
+
+发版时由 [`build/PluginBundle.proj`](../build/PluginBundle.proj) 把 `VelaPluginShip=true`
+的插件收成一个 zip 挂到 Release,主仓库发版时下载解进安装包的 `plugins/`。
+一个可分发插件都收不到时直接失败,不会悄悄出一个空包。详见
+[docs/release-process.md](../docs/release-process.md)。
+
+## 规划中(尚未创建)
+
+- **串口插件**(`velashell.serial`):与 Telnet 同为终端协议能力的使用者;
+  依赖 `System.IO.Ports`,要处理三平台端口枚举与 `Close()` 死锁(见主仓库
+  `docs/Telnet与串口可行性调研.md` 第五节)。
+  连接对话框里的「串口」页签在它落地前保持禁用占位。
+- **容器管理插件**:基于远程执行能力封装 docker/podman 常用操作。
+
+## 新建插件
+
+1. 复制 `VelaShell.Plugin.HelloWorld/` 为新目录,改 csproj 中的 `<VelaPluginId>` 与 `plugin.json`;
+2. 把项目加入 `VelaShell.PluginToolchain.slnx` 的 `/plugins/` 文件夹(仅为 IDE 可见性);
+3. `dotnet build plugins/VelaShell.Plugin.<名字>` —— 输出自动镜像到
+   `artifacts/plugins/<目录名>/`;想让本机 VelaShell 直接装载,构建前设
+   `VELASHELL_DEV_APP_DIR` 指向应用目录(见 [docs/dev-guide.md](../docs/dev-guide.md) §2.1)。
+   目录名 = 插件 id 把点换成短横(`velashell.ai` → `velashell-ai`):macOS 的 `codesign`
+   会把 `.app` 内带点号的目录当成嵌套 bundle 而签名失败。目录名不参与任何逻辑,
+   宿主是枚举子目录后从 `plugin.json` 读 id。
+
+本目录的 `Directory.Build.props/targets` 已统一处理:`EnableDynamicLoading`、
+`plugin.json` 随构建输出、构建后镜像、发布期按 `VelaPluginShip`
+交付进分发包(`GetVelaPluginPayload`)。SDK 引用必须保持
+`Private="false" ExcludeAssets="runtime"`(契约程序集由宿主统一提供)。

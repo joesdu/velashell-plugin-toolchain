@@ -1,0 +1,89 @@
+<Project>
+  <PropertyGroup>
+	<TargetFramework>net11.0</TargetFramework>
+  </PropertyGroup>
+
+  <!-- 定义 Linux -->
+  <PropertyGroup>
+  	<IsLinux Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">true</IsLinux>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsLinux)' == 'true'">
+  	<DefineConstants>$(DefineConstants);LINUX</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- 插件 SDK 系列包(VelaShell.PluginSdk / .Testing / .Build、VelaShell.Plugin.Cli、
+         VelaShell.Plugin.Templates)与随包分发的第一方插件共用这个版本号。
+         **与宿主版本解耦**:VelaShell 主程序发 1.2.3 不代表插件契约变了,插件作者也不该
+         为了跟版本号而重新编译。CI 发包时用 -p:VelaSdkVersion= 覆盖(取自 Release 标签)。 -->
+    <VelaSdkVersion Condition="'$(VelaSdkVersion)' == ''">1.4.0</VelaSdkVersion>
+    <!-- 去掉预发布后缀的数字版(AssemblyVersion/FileVersion 不接受后缀)与主版本号。 -->
+    <VelaSdkVersionCore>$([System.Text.RegularExpressions.Regex]::Replace($(VelaSdkVersion), '-.*$', ''))</VelaSdkVersionCore>
+    <VelaSdkMajor>$([System.Text.RegularExpressions.Regex]::Replace($(VelaSdkVersionCore), '\..*$', ''))</VelaSdkMajor>
+    <!-- 本仓库统一版本号(插件工程即取此值;SDK 系列包在 plugin-sdk/Directory.Build.props 里
+         另行显式设定,值相同,写两处是为了让"包版本"这件事在包工程附近可见)。 -->
+    <Version>$(VelaSdkVersion)</Version>
+    <AssemblyVersion>$(VelaSdkVersionCore)</AssemblyVersion>
+    <FileVersion>$(VelaSdkVersionCore)</FileVersion>
+    <!-- 不把 git 提交哈希拼进 InformationalVersion(默认会加 +sha 后缀)。 -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- 插件与宿主必须用同一版本的 Avalonia:装载器强制让 Avalonia* 回落到宿主那一套
+         (见宿主的 PluginAssemblyLoadContext),版本不一致时表现为跨 ALC 的控件类型对不上。
+         **本仓库是这个版本号的唯一权威**:VelaShell.PluginSdk.Build 用精确区间 [x.y.z]
+         把它锁给所有插件工程,同时 VelaShell.PluginSdk 包在 buildTransitive 里把它
+         导出成 $(VelaSdkPinnedAvaloniaVersion) —— 宿主仓库据此在构建期核对自己引用的
+         Avalonia 是否与 SDK 锁的一致(见宿主 src/Directory.Build.targets 的
+         VerifyAvaloniaMatchesSdk)。改这里 = 改插件生态的 Avalonia 版本,
+         必须与宿主同一波发布。 -->
+    <VelaAvaloniaVersion>12.1.1</VelaAvaloniaVersion>
+    <!-- AvaloniaEdit 走自己的版本线(程序集名 AvaloniaEdit 同样命中装载器的 "Avalonia" 前缀,
+         运行时一律回落到宿主那份),因此同样必须与宿主一致。 -->
+    <VelaAvaloniaEditVersion>12.0.0</VelaAvaloniaEditVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+  	<Authors>joesdu</Authors>
+  	<PackagePrefix>VelaShell</PackagePrefix>
+  	<RepositoryType>git</RepositoryType>
+  	<RepositoryUrl>https://github.com/joesdu/velashell-plugin-toolchain</RepositoryUrl>
+  	<GenerateAssemblyConfigurationAttribute>True</GenerateAssemblyConfigurationAttribute>
+  	<GenerateAssemblyCompanyAttribute>True</GenerateAssemblyCompanyAttribute>
+  	<GenerateAssemblyProductAttribute>True</GenerateAssemblyProductAttribute>
+  	<GenerateDocumentationFile>True</GenerateDocumentationFile>
+  	<PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
+  	<EnablePreviewFeatures>true</EnablePreviewFeatures>
+  	<Features>$(Features);runtime-async=on</Features>
+  	<NoWarn>$(NoWarn);CA2252;SYSLIB5007;</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+  	<None Include=".\README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <PropertyGroup>
+  	<LangVersion>preview</LangVersion>
+  	<Nullable>enable</Nullable>
+  	<ImplicitUsings>enable</ImplicitUsings>
+  	<NoWarn>$(NoWarn);IDE0047;</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <VelaRepoRoot>$(MSBuildThisFileDirectory)</VelaRepoRoot>
+    <VelaArtifactsDir Condition="'$(VelaArtifactsDir)' == ''">$(VelaRepoRoot)artifacts</VelaArtifactsDir>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- 强名称密钥。宿主(Release 下签名)引用 VelaShell.PluginSdk,已签名程序集不能引用
+         未签名程序集,因此 SDK 必须用**与宿主同一把**钥匙签名。密钥不入库
+         (.gitignore 里 *.snk),CI 从 STRONG_NAME_KEY 机密还原到这里;
+         本地日常构建走 Debug,不需要它。 -->
+    <VelaStrongNameKey Condition="'$(VelaStrongNameKey)' == ''">$(MSBuildThisFileDirectory)VelaShell.snk</VelaStrongNameKey>
+  </PropertyGroup>
+</Project>

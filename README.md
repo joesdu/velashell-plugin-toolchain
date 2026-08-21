@@ -1,0 +1,82 @@
+# VelaShell 插件工具链
+
+[VelaShell](https://github.com/joesdu/VelaShell) 的插件开发工具链:契约 SDK、测试替身、
+构建/打包支持、`vela-plugin` 命令行、`dotnet new` 模板,以及随主程序分发的第一方插件。
+
+主仓库 [joesdu/VelaShell](https://github.com/joesdu/VelaShell) 只放**主程序**;
+凡是插件作者会引用、会安装、会照抄的东西都在这里。
+
+## 仓库里有什么
+
+| 目录 | 内容 | 产物 |
+| --- | --- | --- |
+| `plugin-sdk/VelaShell.PluginSdk` | 契约程序集:插件入口、能力接口、`plugin.json` 清单模型、`.vpx` 容器格式 | NuGet `VelaShell.PluginSdk` |
+| `plugin-sdk/VelaShell.PluginSdk.Testing` | 测试替身:`TestPluginContext` 与各能力的内存实现,不起宿主也能测插件 | NuGet `VelaShell.PluginSdk.Testing` |
+| `plugin-sdk/VelaShell.PluginSdk.Build` | 插件工程**只需引用这一个包**:MSBuild targets + 打包器 + Avalonia 版本锁 | NuGet `VelaShell.PluginSdk.Build` |
+| `tools/VelaShell.Plugin.Cli` | `vela-plugin`:校验清单、打 `.vpx`、签名/验签、挂载到本机宿主调试 | NuGet `VelaShell.Plugin.Cli`(dotnet tool) |
+| `templates/` | `dotnet new` 模板:`velaplugin`(基础)/ `velaplugin-ui`(带 Avalonia 面板) | NuGet `VelaShell.Plugin.Templates` |
+| `plugins/` | 第一方插件:AI 助手、Redis、S3、Telnet,以及示例插件 HelloWorld | Release 资产 `velashell-plugins-<版本>.zip` + 各自的 `.vpx` |
+| `tests/` | 契约测试(容器格式/清单解析)与各插件的单元测试 | — |
+
+## 快速上手(写自己的插件)
+
+```bash
+dotnet new install VelaShell.Plugin.Templates
+dotnet new velaplugin-ui -n MyPlugin --publisher acme --authorName "Your Name"
+cd MyPlugin
+dotnet build -t:PackVpx          # 出 bin/vpx/*.vpx
+```
+
+细节看 [`docs/dev-guide.md`](docs/dev-guide.md);命令行手册看 [`docs/cli.md`](docs/cli.md);
+发布与签名看 [`docs/publishing.md`](docs/publishing.md);API 面看 [`docs/sdk-reference.md`](docs/sdk-reference.md)。
+英文版在 [`docs-en/`](docs-en/)。
+
+插件系统的**架构蓝图**(进程模型、IPC 协议、权限系统、威胁模型等)留在主仓库的
+[`docs/plugins/`](https://github.com/joesdu/VelaShell/tree/main/docs/plugins) —— 那些描述的是
+宿主侧的实现,读它是为了理解插件为什么长这样,写插件本身用不到。
+
+## 在本仓库里开发
+
+```bash
+dotnet build VelaShell.PluginToolchain.slnx
+dotnet test  VelaShell.PluginToolchain.slnx -c Debug
+```
+
+`-c Debug` 不是随手写的:Release 会打开强名称签名,而签名程序集的 `InternalsVisibleTo`
+要求友元也用同一把钥匙签名 —— 测试程序集不满足,用 Release 跑测试会在白盒用例上
+当场 CS0122。本地没有 `VelaShell.snk` 也就构建不了 Release,这是预期的
+(密钥不入库,CI 从 `STRONG_NAME_KEY` 机密还原)。
+
+### 改插件时想立刻在真实宿主里看到效果
+
+构建后插件输出会镜像到 `artifacts/plugins/<目录名>/`。要直接铺进本机 VelaShell,
+指一下应用目录即可:
+
+```powershell
+$env:VELASHELL_DEV_APP_DIR = 'G:\VelaShell\src\VelaShell\bin\Debug\net11.0'
+dotnet build plugins/VelaShell.Plugin.Redis
+```
+
+或者用 `vela-plugin dev init` 把插件工程挂到宿主的开发插件根上(见 `docs/cli.md`)。
+
+## 版本与发布
+
+SDK 版本(`Directory.Build.props` 的 `VelaSdkVersion`)与**主程序版本解耦** ——
+主程序发 1.2.3 不代表插件契约变了,插件作者也不该为了跟版本号而重新编译。
+
+发版方式:**在 GitHub 上发布 Release**(标签形如 `v1.4.0`),流水线会
+把五个包推上 nuget.org、把插件分发物挂到该 Release。完整流程、版本号纪律
+(`AssemblyVersion` 主版本 == `apiLevel`)与 NuGet 可信发布的配置见
+[`docs/release-process.md`](docs/release-process.md)。
+
+## 与主程序的两个硬约束
+
+1. **Avalonia 版本**必须与宿主一致。本仓库是这个版本号的权威(`VelaAvaloniaVersion`),
+   `VelaShell.PluginSdk` 包把它导出成 `VelaSdkPinnedAvaloniaVersion`,主仓库在自己的
+   构建期核对。漂了的表现是跨 ALC 的控件类型对不上,而且要等到用户装上插件才炸。
+2. **强名称签名**用与宿主同一把钥匙。宿主 Release 下是签名程序集,而签名程序集
+   不能引用未签名程序集。
+
+## 许可
+
+AGPL-3.0-only,与主仓库一致。商业授权见主仓库的 `LICENSE-COMMERCIAL.md`。

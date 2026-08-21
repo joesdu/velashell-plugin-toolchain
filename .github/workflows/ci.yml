@@ -1,0 +1,131 @@
+# 日常验证。发布不走这里(见 release.yml),但**发布会做的事这里基本都做一遍** ——
+# 打包与模板冒烟这两步的坑几乎全部出在"仓库外环境"上(插件工程吃不到仓库内的
+# Directory.Build.props),等到发版当天才第一次跑等于把风险留到最不该出错的时刻。
+#
+# 与 release.yml 的差别只有三处:不推 nuget.org、不上传 Release 资产、
+# 以及 fork PR 拿不到强名称密钥时关掉签名继续跑。
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      # 版本号**不能瞎编**:模板 template.json 里写死了生成工程要引用的 SDK 包版本,
+      # templates 工程的 VerifyTemplateSdkVersion 会在构建期核对它与 VelaSdkVersion
+      # 一致(VELA1004)。编一个 0.0.0-ci.N 出来,templates 包每次 CI 都打不出来。
+      # 这条路径不推送,复用仓库当前的默认版本即可。
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $props = Get-Content -Raw Directory.Build.props
+          $version = [regex]::Match($props, '<VelaSdkVersion[^>]*>([^<]+)</VelaSdkVersion>').Groups[1].Value
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            Write-Error "Could not read VelaSdkVersion from Directory.Build.props"
+            exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Validating version $version"
+
+      # 来自 fork 的 PR 拿不到仓库机密(GitHub 的既定行为),此时**关掉签名**继续跑 ——
+      # 这条路径要验的是"包能不能打出来、模板能不能用",与签名无关;
+      # 而不关的话 CSC 会因为找不到 .snk 直接失败,PR 作者只会看到一条与他改动无关的报错。
+      - name: Restore strong-name key
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SNK_B64)) {
+            Write-Host "::notice::STRONG_NAME_KEY unavailable (fork PR); building without strong-name signing."
+            "VELA_SIGN_ARGS=-p:SignAssembly=false" >> $env:GITHUB_ENV
+          } else {
+            [IO.File]::WriteAllBytes("VelaShell.snk", [Convert]::FromBase64String($env:SNK_B64))
+          }
+        env:
+          SNK_B64: ${{ secrets.STRONG_NAME_KEY }}
+
+      # Debug,理由同 release.yml:Release 打开强名签名,而测试程序集不是签名友元。
+      - name: Test
+        shell: pwsh
+        run: |
+          dotnet test VelaShell.PluginToolchain.slnx -c Debug --nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Pack
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          New-Item -ItemType Directory -Force artifacts/nuget | Out-Null
+          $projects = @(
+            'plugin-sdk/VelaShell.PluginSdk/VelaShell.PluginSdk.csproj',
+            'plugin-sdk/VelaShell.PluginSdk.Testing/VelaShell.PluginSdk.Testing.csproj',
+            'tools/VelaShell.Plugin.Cli/VelaShell.Plugin.Cli.csproj',
+            'plugin-sdk/VelaShell.PluginSdk.Build/VelaShell.PluginSdk.Build.csproj',
+            'templates/VelaShell.Plugin.Templates.csproj'
+          )
+          foreach ($project in $projects) {
+            dotnet pack $project -c Release -o artifacts/nuget -p:VelaSdkVersion=$version --nologo $env:VELA_SIGN_ARGS
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          Get-ChildItem artifacts/nuget | Select-Object -ExpandProperty Name
+
+      - name: Smoke test (template -> build -> .vpx)
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $feed = (Resolve-Path artifacts/nuget).Path
+          $work = Join-Path $env:RUNNER_TEMP 'sdk-smoke'
+          New-Item -ItemType Directory -Force $work | Out-Null
+          @"
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="local" value="$feed" />
+              <add key="nuget" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+          </configuration>
+          "@ | Set-Content (Join-Path $work 'nuget.config')
+
+          dotnet new install "$feed/VelaShell.Plugin.Templates.$version.nupkg"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          try {
+            Push-Location $work
+            dotnet new velaplugin-ui -n Smoke --publisher ci --authorName "CI" --sdkVersion $version
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            Push-Location (Join-Path $work 'Smoke')
+            dotnet build -c Release -t:PackVpx --nologo
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $vpx = Get-ChildItem bin/vpx/*.vpx | Select-Object -First 1
+            if (-not $vpx) { throw "PackVpx produced no package." }
+            dotnet "$env:GITHUB_WORKSPACE/tools/VelaShell.Plugin.Cli/bin/Release/net11.0/VelaShell.Plugin.Cli.dll" info $vpx.FullName
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $leaked = Get-ChildItem bin/Release/net11.0 -Filter '*.dll' |
+              Where-Object { $_.Name -like 'Avalonia*' -or $_.Name -eq 'VelaShell.PluginSdk.dll' }
+            if ($leaked) { throw "Shared assemblies leaked into the plugin output: $($leaked.Name -join ', ')" }
+            Pop-Location
+            Pop-Location
+          } finally {
+            dotnet new uninstall VelaShell.Plugin.Templates
+          }
+
+      # 插件分发包也在 CI 里打一遍:主仓库的发布链路依赖它的布局,
+      # 布局在这里坏掉的话,发现的时机应该是现在,而不是主程序发版当天。
+      - name: Build first-party plugin bundle
+        shell: pwsh
+        run: |
+          dotnet build build/PluginBundle.proj -c Release -t:Bundle -p:BundleDir="$PWD/artifacts/plugins-bundle" --nologo $env:VELA_SIGN_ARGS
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem artifacts/plugins-bundle | Select-Object -ExpandProperty Name
