@@ -14,15 +14,17 @@
 
   <PropertyGroup>
     <!-- 插件 SDK 系列包(VelaShell.PluginSdk / .Testing / .Build、VelaShell.Plugin.Cli、
-         VelaShell.Plugin.Templates)与随包分发的第一方插件共用这个版本号。
+         VelaShell.Plugin.Templates)共用这个版本号。第一方插件已搬去 joesdu/velashell-plugins,
+         有自己的发行版本号(VelaPluginsVersion),与这里无关 —— SDK 发 1.5.0 不代表插件
+         必须跟着发,插件发 1.4.1 也不代表契约动了。
          **与宿主版本解耦**:VelaShell 主程序发 1.2.3 不代表插件契约变了,插件作者也不该
          为了跟版本号而重新编译。CI 发包时用 -p:VelaSdkVersion= 覆盖(取自 Release 标签)。 -->
     <VelaSdkVersion Condition="'$(VelaSdkVersion)' == ''">1.4.0</VelaSdkVersion>
     <!-- 去掉预发布后缀的数字版(AssemblyVersion/FileVersion 不接受后缀)与主版本号。 -->
     <VelaSdkVersionCore>$([System.Text.RegularExpressions.Regex]::Replace($(VelaSdkVersion), '-.*$', ''))</VelaSdkVersionCore>
     <VelaSdkMajor>$([System.Text.RegularExpressions.Regex]::Replace($(VelaSdkVersionCore), '\..*$', ''))</VelaSdkMajor>
-    <!-- 本仓库统一版本号(插件工程即取此值;SDK 系列包在 plugin-sdk/Directory.Build.props 里
-         另行显式设定,值相同,写两处是为了让"包版本"这件事在包工程附近可见)。 -->
+    <!-- 本仓库统一版本号(SDK 系列包在 plugin-sdk/Directory.Build.props 里另行显式设定,
+         值相同,写两处是为了让"包版本"这件事在包工程附近可见)。 -->
     <Version>$(VelaSdkVersion)</Version>
     <AssemblyVersion>$(VelaSdkVersionCore)</AssemblyVersion>
     <FileVersion>$(VelaSdkVersionCore)</FileVersion>

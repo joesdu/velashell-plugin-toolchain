@@ -177,3 +177,13 @@ if ($Check) {
 }
 
 Write-Host "已把 $($changed.Count) 处落点更新到 $Version。"
+
+# 显式 exit 0,别靠"脚本正常结束"隐含成功。
+# 调用方是 `& ./scripts/Set-Version.ps1 ...` 后面跟一句 if ($LASTEXITCODE) —— 而 .ps1
+# **不调用 exit 就根本不会设置 $LASTEXITCODE**,它会原样保留调用方进程里的旧值。
+# GitHub 的每个 pwsh 步骤都是全新进程,那里的旧值是 $null,于是 `$LASTEXITCODE -ne 0`
+# 求值为真 —— 脚本明明改好了文件,步骤却报 exit code 1。
+# 这条路一直没露面,是因为上面 $changed.Count -eq 0 那个分支有 exit 0:发版时若 main
+# 已经是目标版本就走那边。真正要落版本号的那次(也就是发版本身)才会踩到。
+# 2026-08-22 在 velashell-plugins 仓库发 1.0.0 时撞上,同一份脚本这边一并修。
+exit 0

@@ -1,26 +1,21 @@
 # 插件工具链的发布流水线:在 GitHub 页面**发布 Release** 时自动触发。
 #
-# 一次发布同时产出两类东西,共用 Release 标签里的那个版本号:
+# 一次发布产出五个 NuGet 包,推到 nuget.org,共用 Release 标签里的那个版本号:
 #
-#   ① 五个 NuGet 包 —— 推到 nuget.org
 #      VelaShell.PluginSdk           契约程序集(插件与宿主唯一共享的类型)
 #      VelaShell.PluginSdk.Testing   测试替身(TestPluginContext 与各能力内存实现)
 #      VelaShell.PluginSdk.Build     插件工程引用的那一个包(targets + 打包器 + 依赖锁)
 #      VelaShell.Plugin.Cli          dotnet tool `vela-plugin`
 #      VelaShell.Plugin.Templates    dotnet new 模板(velaplugin / velaplugin-ui)
 #
-#   ② 第一方插件的分发物 —— 挂到 Release 资产上
-#      velashell-plugins-<版本>.zip  主程序安装包里 plugins/ 那一层的一比一布局。
-#                                    VelaShell 主仓库发版时按 pin 的版本下载它、解进发布目录
-#                                    (见主仓库 Directory.Build.props 的 VelaPluginsBundleVersion)。
-#      *.vpx                         每个插件一份,供用户手工安装 / 作插件商店的源。
+# 第一方插件**不在这里发**:插件已搬去 joesdu/velashell-plugins,那个仓库有自己的
+# Release 流水线,产出 velashell-plugins-<版本>.zip 与各插件的 .vpx。主仓库按
+# VelaPluginsBundleVersion 去那边取。本流水线只管 SDK 与工具链。
 #
 # ⚠️ 发版方式(2026-08-21 起):**发 Release,不再打 sdk-v* 标签**。
 #    以前是 `git tag sdk-v1.0.0 && git push` 由标签事件触发;现在统一走 Release ——
-#    理由有三:
+#    理由有二:
 #      · 版本号、发布说明、产物三者在同一个页面上,回看一次发布不用在标签和 Actions 之间来回跳;
-#      · 插件分发包必须挂在某个 Release 上才有稳定下载地址(主仓库要按版本取它),
-#        而"打标签"本身不产生 Release;
 #      · 预发布可以用 Release 的 prerelease 勾选表达,不必再靠版本号后缀去猜。
 #    标签名带不带 v 前缀都行(下面会 TrimStart),建议统一 `v1.4.0`。
 #
@@ -71,7 +66,9 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  # 只读即可:插件分发物搬去 velashell-plugins 之后,本流水线不再往 Release 上传资产。
+  # 需要写权限的只有 sync-main 那个 job,它在自己的 job 级 permissions 里单独声明。
+  contents: read
   # Trusted Publishing 的前提:没有它,NuGet/login 拿不到 OIDC 令牌,换密钥这一步会直接失败。
   id-token: write
 
@@ -117,7 +114,9 @@ jobs:
         shell: pwsh
         run: |
           & ./scripts/Set-Version.ps1 '${{ steps.version.outputs.version }}'
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # if ($LASTEXITCODE) 而不是 -ne 0:.ps1 不调用 exit 时**不会设置** $LASTEXITCODE,
+          # 那时它是 $null —— 而 `$null -ne 0` 为真,会把一次成功判成失败。
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git --no-pager diff --stat
 
       # 强名称密钥。缺了它 Release 构建会在 CSC 那一步失败(找不到 .snk),
@@ -206,41 +205,10 @@ jobs:
             dotnet new uninstall VelaShell.Plugin.Templates
           }
 
-      # 第一方插件的分发物。布局与校验规则见 build/PluginBundle.proj。
-      # 插件是纯托管、无 RID 的产物,一个包吃遍五个平台,不必按 RID 分。
-      - name: Build first-party plugin bundle
-        shell: pwsh
-        run: |
-          $version = '${{ steps.version.outputs.version }}'
-          New-Item -ItemType Directory -Force artifacts/release | Out-Null
-          dotnet build build/PluginBundle.proj -c Release -t:Bundle -p:BundleDir="$PWD/artifacts/plugins-bundle" --nologo
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Compress-Archive -Path artifacts/plugins-bundle/* -DestinationPath "artifacts/release/velashell-plugins-$version.zip" -Force
-          dotnet build build/PluginBundle.proj -c Release -t:PackAllVpx -p:VpxDir="$PWD/artifacts/vpx" --nologo
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Copy-Item artifacts/vpx/*.vpx artifacts/release/
-          Get-ChildItem artifacts/release | Select-Object Name, Length
-
-      - name: Generate SHA256SUMS.txt
-        shell: pwsh
-        run: |
-          Push-Location artifacts/release
-          Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS.txt' | ForEach-Object {
-            "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name
-          } | Sort-Object | Set-Content SHA256SUMS.txt
-          Get-Content SHA256SUMS.txt
-          Pop-Location
-
       - uses: actions/upload-artifact@v7
         with:
           name: nuget-packages
           path: artifacts/nuget/*
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: plugin-release-assets
-          path: artifacts/release/*
           if-no-files-found: error
 
       # Trusted Publishing:用本次运行的 OIDC 身份换一把短时效推送密钥。
@@ -271,18 +239,6 @@ jobs:
           }
         env:
           NUGET_TOKEN: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-
-      # 插件分发物挂到 Release 上。主仓库发版时按固定地址取 zip:
-      #   releases/download/<tag>/velashell-plugins-<版本>.zip
-      - name: Upload plugin assets to release
-        if: ${{ !inputs.dryRun }}
-        shell: pwsh
-        run: |
-          $assets = Get-ChildItem artifacts/release -File | ForEach-Object FullName
-          gh release upload '${{ steps.version.outputs.tag }}' @assets --clobber --repo $env:GITHUB_REPOSITORY
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-        env:
-          GH_TOKEN: ${{ github.token }}
 
   # ── 把版本号回写 main(以 PR 的形式)────────────────────────────────────────
   # 上面那个 Stamp 步骤只改了 runner 上的工作区 —— 包已经发出去了,但仓库里的
@@ -327,7 +283,9 @@ jobs:
           $branch = "chore/version-$version"
 
           & ./scripts/Set-Version.ps1 $version
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # if ($LASTEXITCODE) 而不是 -ne 0:.ps1 不调用 exit 时**不会设置** $LASTEXITCODE,
+          # 那时它是 $null —— 而 `$null -ne 0` 为真,会把一次成功判成失败。
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           if (-not (git status --porcelain)) {
             Write-Host "::notice::main 里的版本号已经是 $version,无需回写。"

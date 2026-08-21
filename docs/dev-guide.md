@@ -32,8 +32,7 @@
 | `plugin-sdk/VelaShell.PluginSdk.Build/` | 插件工程引用的那一个 NuGet 包:MSBuild props/targets + 随包分发的打包器 |
 | `tools/VelaShell.Plugin.Cli/` | `vela-plugin` 命令行工具(校验/打包/签名/开发挂载) |
 | `templates/` | `dotnet new` 模板(`velaplugin` / `velaplugin-ui`) |
-| `plugins/` | 第一方插件(含 HelloWorld 示例) |
-| `tests/` | 契约测试(容器格式/清单解析)与各插件的单元测试 |
+| `tests/` | 契约测试:`.vpx` 容器格式与 `plugin.json` 清单解析 |
 
 宿主侧的实现在**主仓库** [joesdu/VelaShell](https://github.com/joesdu/VelaShell):
 `src/VelaShell.Infrastructure/Plugins/`(发现/装载/激活/停用、能力桥接)、
@@ -42,92 +41,29 @@
 
 ## 2. 快速上手
 
-### 2.1 本仓库内的插件(第一方)
+### 2.1 第一方插件在哪儿
 
-```text
-plugins/VelaShell.Plugin.Demo/
-├── VelaShell.Plugin.Demo.csproj
-├── plugin.json
-└── DemoPlugin.cs
-```
+官方维护的插件(AI / Redis / S3 / Telnet,以及示例插件 HelloWorld)在
+[joesdu/velashell-plugins](https://github.com/joesdu/velashell-plugins),不在本仓库。
 
-csproj(`plugins/Directory.Build.props` 已统一 `EnableDynamicLoading` 与
-plugin.json 输出;`VelaPluginId` 驱动构建后复制到应用输出目录):
+**它们与你自己的插件走完全同一条路径** —— 从 nuget.org 引用
+`VelaShell.PluginSdk.Build`,没有任何"仓库内特权"。所以下面 §2.2 讲的就是全部,
+读完照做即可;想看真实规模的例子(协议能力、面板、第三方依赖随插件分发)就去那个仓库
+翻 `plugins/` 下的任一个。
 
-```xml
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <VelaPluginId>velashell.demo</VelaPluginId>
-  </PropertyGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\plugin-sdk\VelaShell.PluginSdk\VelaShell.PluginSdk.csproj"
-                      Private="false" ExcludeAssets="runtime" />
-  </ItemGroup>
-</Project>
-```
+那个仓库额外定义了两件**只与"随主程序分发"有关**的事,你写第三方插件用不到,
+但读它的 csproj 时会撞见:
 
-plugin.json:
-
-```jsonc
-{
-  "id": "velashell.demo",              // <发布者>.<名称>,小写 [a-z0-9.-]
-  "version": "0.1.0",                  // semver
-  "displayName": "Demo",
-  "description": "示例",
-  "entry": "VelaShell.Plugin.Demo.dll", // 相对插件目录;禁止绝对路径与 ".."
-  "apiLevel": 1
-}
-```
-
-入口类:
-
-```csharp
-using VelaShell.PluginSdk;
-
-[VelaPlugin]
-public sealed class DemoPlugin : IVelaPlugin
-{
-    public Task ActivateAsync(IPluginContext context, CancellationToken ct)
-    {
-        context.Log.Info("Demo activated.");
-        return Task.CompletedTask;
-    }
-
-    public Task DeactivateAsync(CancellationToken ct) => Task.CompletedTask;
-}
-```
-
-**构建后自动铺开**:`plugins/Directory.Build.targets` 的 `CopyVelaPluginToAppOutput`
-会把插件输出(含 `plugin.json`)镜像到 `artifacts/plugins/<目录名>/`。要让本机的
-VelaShell 直接装载到最新构建,指一下应用目录即可 —— 插件输出会额外再镜像一份进去:
-
-```powershell
-$env:VELASHELL_DEV_APP_DIR = 'G:\VelaShell\src\VelaShell\bin\Debug\net11.0'
-dotnet build plugins/VelaShell.Plugin.Demo
-```
-
-(也可以在命令行传 `-p:VelaDevAppDir=<应用目录>`。拆库之前这条路径是写死的
-`src/VelaShell/bin/...` —— 本仓库没有宿主工程了,所以改成由你指。)
-
-最后把项目加进 `VelaShell.PluginToolchain.slnx` 的 `/plugins/` 文件夹(仅为 IDE 可见性)。
-
-**要不要随安装包分发**,由 `<VelaPluginShip>` 决定(默认 `true`):
-
-```xml
-<!-- 只做范例、不进发行包:本机构建照常镜像出来能装载;分发包不收它 -->
-<VelaPluginShip>false</VelaPluginShip>
-```
-
-`true` 的插件由 `build/PluginBundle.proj` 的 `Bundle` 目标经各插件的
-`GetVelaPluginPayload` 收进 `velashell-plugins-<版本>.zip`,包内布局就是安装包
-`plugins/<目录名>/` 那一层;主仓库发版时下载解开即可(见
-[`release-process.md`](release-process.md))。官方示例插件 `velashell.hello-world`
-设了 `false`。
+- `<VelaPluginShip>`(默认 `true`):`false` 的插件不进 `velashell-plugins-<版本>.zip`,
+  只在本机构建时铺出来当范例(示例插件 HelloWorld 就是 `false`);
+- 构建后把输出镜像到 `artifacts/plugins/<目录名>/` 与 `VELASHELL_DEV_APP_DIR` 指定的
+  应用目录 —— 相当于内建了一条 `vela-plugin dev init`。
 
 > **目录名 = id 把点换成短横**(`velashell.ai` → `velashell-ai`)。macOS 的 `codesign`
 > 会把 `.app` 内带点号的目录当成嵌套 bundle 去解析,原样用 id 做目录名会让签名直接失败
 > (`bundle format unrecognized, invalid, or unsuitable`)。目录名**不参与任何逻辑** ——
 > 宿主是枚举子目录后从 `plugin.json` 读 id,因此这只是打包侧的命名约定。
+> 用户经 `.vpx` 装到数据目录的插件仍按 id 建目录(那些不在 `.app` 里,不参与签名)。
 
 ### 2.2 仓库外插件(第三方)—— 从 `dotnet new` 到装上,五分钟
 
@@ -670,7 +606,7 @@ new()
 - 国际化自理:按 `context.Host.Locale` 取词,订阅 `LocaleChanged` 热更新。
 - 插件停用时其全部面板由宿主自动关闭。
 - 完整示例(编译期 AXAML + 双语文案 + 会话/远程执行联动):
-  `plugins/VelaShell.Plugin.HelloWorld`(DemoPanelView.axaml)。
+  [`plugins/VelaShell.Plugin.HelloWorld`](https://github.com/joesdu/velashell-plugins/tree/main/plugins/VelaShell.Plugin.HelloWorld)(DemoPanelView.axaml)。
 
 ### 5.10 Secrets —— 加密机密存储
 
@@ -789,7 +725,7 @@ context.Protocols.Register(
 > 强制小写是为了消灭大小写歧义 —— 这个 id 在注册表、界面、落盘配置三处被比较,
 > 只要允许大写,`Foo.Bar` 与 `foo.bar` 就会在不同环节被判成"是"和"不是"同一个。
 
-完整示例:`plugins/VelaShell.Plugin.S3`(协议 + 两个管理面板 + 22 项桶配置)。
+完整示例:[`plugins/VelaShell.Plugin.S3`](https://github.com/joesdu/velashell-plugins/tree/main/plugins/VelaShell.Plugin.S3)(协议 + 两个管理面板 + 22 项桶配置)。
 
 #### 5.13.1 终端协议(`IProtocolTerminal`)
 
@@ -833,7 +769,7 @@ ValueTask       ResizeAsync(int columns, int rows, CancellationToken ct);
 - 终端协议**没有** SessionId:SFTP 面板、任务管理器、资源监视器、隧道对它自动灰掉;
   "连接后执行命令"也不会发(Telnet 连上先看到的是 `login:`,注入命令等于打进登录提示符)。
 
-完整示例:`plugins/VelaShell.Plugin.Telnet`(RFC 854 协商 + NAWS + 8 位透明,零第三方依赖)。
+完整示例:[`plugins/VelaShell.Plugin.Telnet`](https://github.com/joesdu/velashell-plugins/tree/main/plugins/VelaShell.Plugin.Telnet)(RFC 854 协商 + NAWS + 8 位透明,零第三方依赖)。
 
 ### 5.14 Workspaces —— 自带非文件型连接(Redis / MySQL / Kafka …)
 
@@ -913,7 +849,7 @@ internal sealed class MyWorkspaceProvider(IPluginContext context) : IWorkspacePr
 > **id 发布后不可更改**,规则与协议 id 完全相同(全小写、以插件 id 为前缀、≤128 字符),
 > 两者**共用同一个判定与同一个页签条带**,因此同一份清单里工作台 id 与协议 id 也不得相撞。
 
-完整示例:`plugins/VelaShell.Plugin.Redis`(键空间浏览器 + 类型详情 + 声明式连接表单)。
+完整示例:[`plugins/VelaShell.Plugin.Redis`](https://github.com/joesdu/velashell-plugins/tree/main/plugins/VelaShell.Plugin.Redis)(键空间浏览器 + 类型详情 + 声明式连接表单)。
 
 ## 6. 隔离进程模式(isolated)
 

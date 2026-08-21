@@ -49,7 +49,9 @@ jobs:
         shell: pwsh
         run: |
           & ./scripts/Set-Version.ps1 '${{ steps.version.outputs.version }}' -Check
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # if ($LASTEXITCODE) 而不是 -ne 0:.ps1 不调用 exit 时**不会设置** $LASTEXITCODE,
+          # 那时它是 $null —— 而 `$null -ne 0` 为真,会把一次成功判成失败。
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       # 来自 fork 的 PR 拿不到仓库机密(GitHub 的既定行为),此时**关掉签名**继续跑 ——
       # 这条路径要验的是"包能不能打出来、模板能不能用",与签名无关;
@@ -131,11 +133,3 @@ jobs:
             dotnet new uninstall VelaShell.Plugin.Templates
           }
 
-      # 插件分发包也在 CI 里打一遍:主仓库的发布链路依赖它的布局,
-      # 布局在这里坏掉的话,发现的时机应该是现在,而不是主程序发版当天。
-      - name: Build first-party plugin bundle
-        shell: pwsh
-        run: |
-          dotnet build build/PluginBundle.proj -c Release -t:Bundle -p:BundleDir="$PWD/artifacts/plugins-bundle" --nologo $env:VELA_SIGN_ARGS
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Get-ChildItem artifacts/plugins-bundle | Select-Object -ExpandProperty Name
