@@ -17,7 +17,11 @@ public static class RedisTtl
     /// 解析一段 TTL 输入。
     /// </summary>
     /// <param name="text">用户输入。</param>
-    /// <param name="now">当前时间(绝对时间点写法要拿它算差值;传入而不是取 <c>DateTime.Now</c> 以便单测)。</param>
+    /// <param name="now">
+    /// 当前时间。绝对时间点写法拿它算差值,**并且用它的时区偏移解释不带时区的输入** ——
+    /// 本方法完全不摸机器本地时区,同一份输入在任何机器上结果都一样。
+    /// 传入而不是取 <c>DateTimeOffset.Now</c> 也是为了单测。
+    /// </param>
     /// <param name="ttl">解析出的存活时长。</param>
     /// <returns>是否解析成功。</returns>
     public static bool TryParse(string? text, DateTimeOffset now, out TimeSpan ttl)
@@ -42,11 +46,23 @@ public static class RedisTtl
         {
             return true;
         }
-        // 绝对时间点:按本地时间解析(用户填的就是他表上的时间),再折算成剩余时长。
-        if (DateTime.TryParse(trimmed, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out DateTime absolute)
-            || DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out absolute))
+        // 绝对时间点:用户填的是**他表上的时间**,所以按 now 所在的时区解析,再折算成剩余时长。
+        //
+        // 刻意用 now.Offset 而不是机器本地时区:now 是调用方显式传进来的,再去摸
+        // TimeZoneInfo.Local 等于让同一份输入在不同机器上算出不同结果 —— 在 UTC 的 CI runner 上
+        // "2026-08-17 18:00" 相对 12:00+08:00 会算出 14 小时而不是 6 小时(2026-08-22 踩过)。
+        // 生产路径全部传 DateTimeOffset.Now,now.Offset 就是本地时区,行为不变。
+        //
+        // DateTimeStyles.None(而非 AssumeLocal):无时区的输入解析出 Kind=Unspecified,
+        // 才有资格被安到 now.Offset 上;输入自带 Z / ±hh:mm 时 TryParse 会转成 Local,
+        // 那已经是一个确定的时刻,照原样用。
+        if (DateTime.TryParse(trimmed, CultureInfo.CurrentCulture, DateTimeStyles.None, out DateTime absolute)
+            || DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.None, out absolute))
         {
-            TimeSpan remaining = new DateTimeOffset(absolute) - now;
+            DateTimeOffset instant = absolute.Kind == DateTimeKind.Unspecified
+                ? new DateTimeOffset(absolute, now.Offset)
+                : new DateTimeOffset(absolute);
+            TimeSpan remaining = instant - now;
             if (remaining <= TimeSpan.Zero)
             {
                 // 过去的时间点不当成"立刻过期":那等于用一个看着像笔误的输入删掉一个键。
