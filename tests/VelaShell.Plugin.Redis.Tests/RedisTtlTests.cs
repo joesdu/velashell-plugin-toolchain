@@ -47,6 +47,20 @@ public sealed class RedisTtlTests
     }
 
     [TestMethod]
+    public void AbsoluteTime_IsAnchoredToTheCallersClock_NotTheMachineTimeZone()
+    {
+        // 同一份输入,只换 now 的时区偏移 —— 结果必须一样。
+        // 之前解析用的是**机器本地时区**,于是这个用例在 UTC 的 CI runner 上算出 14 小时
+        // 而不是 6 小时:本机(UTC+8)绿、CI 红,而两边跑的是同一份代码。
+        foreach (TimeSpan offset in new[] { TimeSpan.Zero, TimeSpan.FromHours(8), TimeSpan.FromHours(-5) })
+        {
+            DateTimeOffset now = new(2026, 8, 17, 12, 0, 0, offset);
+            Assert.IsTrue(RedisTtl.TryParse("2026-08-17 18:00:00", now, out TimeSpan ttl));
+            Assert.AreEqual(TimeSpan.FromHours(6), ttl, $"offset {offset}");
+        }
+    }
+
+    [TestMethod]
     public void AbsoluteTimeInThePast_IsRejected()
     {
         // 不当成"立刻过期":那等于用一个看着像笔误的输入删掉一个键。
