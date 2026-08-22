@@ -1,4 +1,3 @@
-using VelaShell.PluginSdk;
 using VelaShell.PluginSdk.Manifest;
 
 namespace VelaShell.PluginSdk.Tests;
