@@ -1,6 +1,6 @@
 # `vela-plugin` 命令行手册
 
-> 适用版本:VelaShell 插件 SDK **1.4.0**(`vela-plugin --version` 看本机装的是哪版)。
+> 适用版本:VelaShell 插件 SDK **1.5.0**(`vela-plugin --version` 看本机装的是哪版)。
 > 相关文档:[开发指南](dev-guide.md) · [打包与发布](publishing.md) · [SDK 参考](sdk-reference.md)
 
 `vela-plugin` 是插件作者的命令行工具。它与宿主共用同一份实现(`VelaShell.PluginSdk`

@@ -1,6 +1,6 @@
 # `vela-plugin` CLI Manual
 
-> Applies to VelaShell plugin SDK **1.4.0** (`vela-plugin --version` tells you what you have).
+> Applies to VelaShell plugin SDK **1.5.0** (`vela-plugin --version` tells you what you have).
 > See also: [Development Guide](dev-guide.md) · [Packaging and Publishing](publishing.md) · [SDK Reference](sdk-reference.md)
 
 `vela-plugin` is the plugin author's command-line tool. It calls the same implementation the
