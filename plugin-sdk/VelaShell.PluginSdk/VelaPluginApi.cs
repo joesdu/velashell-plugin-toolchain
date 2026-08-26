@@ -56,5 +56,5 @@ public static class VelaPluginApi
     /// <c>minSdkVersion: "1.4.0"</c>(声明了反而会把插件挡在老宿主之外,而它在老宿主上跑得好好的)。
     /// </para>
     /// </summary>
-    public const string SdkVersion = "1.4.0";
+    public const string SdkVersion = "1.5.0";
 }

@@ -1,6 +1,6 @@
 # Plugin SDK Reference
 
-> Applies to **SDK 1.4.0 / apiLevel 1**
+> Applies to **SDK 1.5.0 / apiLevel 1**
 > See also: [Development Guide](dev-guide.md) (tutorial) · [CLI Manual](cli.md) · [Packaging and Publishing](publishing.md)
 
 This page is the **lookup-oriented** view of the SDK: package layout, contract surface, what each
@@ -20,7 +20,7 @@ step-by-step walkthrough, read the [Development Guide](dev-guide.md) first.
 | `VelaShell.Plugin.Templates` | developer machine | `dotnet new velaplugin` / `velaplugin-ui` |
 
 ```xml
-<PackageReference Include="VelaShell.PluginSdk.Build" Version="1.4.0" />
+<PackageReference Include="VelaShell.PluginSdk.Build" Version="1.5.0" />
 ```
 
 Do **not** reference `VelaShell.PluginSdk` or `Avalonia` separately — a version mismatch is a
