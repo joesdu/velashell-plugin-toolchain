@@ -22,6 +22,28 @@ public enum ProtocolSettingKind
     Choice,
 
     /// <summary>
+    /// 候选项由插件**在表单打开时现给**的下拉:宿主渲染时调
+    /// <see cref="IProtocolChoiceSource.GetChoicesAsync" /> 取一次,并在下拉旁边给一个刷新按钮。
+    /// <para>
+    /// 给"候选项会在两次打开对话框之间变化"的字段用 —— 串口就是活例子:USB 转串口是**热插拔**设备,
+    /// 而插件的注册发生在惰性激活那一刻,注册时枚举的那份列表等用户插上适配器时早已过期,
+    /// 此后再没有第二次机会。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="Choice" /> 的关键差别:当前值**对不上任何候选项时原样保留**,不归一到第一项。
+    /// 一条存着 <c>COM7</c> 的配置在适配器没插时打开、值被悄悄改写成 <c>COM3</c> 再保存下去,
+    /// 是一次静默的数据损坏。插件应把 <see cref="ProtocolSettingField.AllowsCustomValue" /> 一并置位,
+    /// 好让这个"列表里没有"的值仍然显示得出、编辑得动。
+    /// </para>
+    /// <para>
+    /// 协议实现未实现 <see cref="IProtocolChoiceSource" /> 时退化成只有
+    /// <see cref="ProtocolSettingField.Choices" /> 那份静态兜底列表的下拉 —— 不报错:
+    /// 一个取不到端口列表的表单,仍然应该能让用户手输端口名。
+    /// </para>
+    /// </summary>
+    DynamicChoice,
+
+    /// <summary>
     /// 已保存的 SSH 配置选择器;取值为该配置的 id(不透明字符串),留空表示"不经跳板机"。
     /// <para>
     /// 宿主渲染成"已保存的 SSH 配置"下拉,并在打开会话**之前**代为建立
@@ -119,8 +141,25 @@ public sealed record ProtocolSettingField
     /// <summary>字段下方的一行说明(可选)。</summary>
     public string? Hint { get; init; }
 
-    /// <summary><see cref="ProtocolSettingKind.Choice" /> 的候选项;其余形态忽略。</summary>
+    /// <summary>
+    /// <see cref="ProtocolSettingKind.Choice" /> 的候选项;其余形态忽略。
+    /// <see cref="ProtocolSettingKind.DynamicChoice" /> 拿它当**兜底列表**:
+    /// 取不到动态候选项(插件没实现取值源、或枚举失败)时显示的就是这一份。
+    /// </summary>
     public IReadOnlyList<ProtocolSettingChoice> Choices { get; init; } = [];
+
+    /// <summary>
+    /// 下拉是否允许手输列表以外的值(仅 <see cref="ProtocolSettingKind.Choice" /> 与
+    /// <see cref="ProtocolSettingKind.DynamicChoice" /> 有意义)。置位后宿主渲染成**可编辑**下拉,
+    /// 落盘的是用户输入的原文。
+    /// <para>
+    /// 为什么需要:一张"常用值"列表既要给出便利,又不能把不在表上的值判成非法。串口两处都撞上 ——
+    /// 波特率表里没有 250000(Marlin 固件)与 76800(某些工业模块),端口列表里没有当前没插的那个
+    /// 适配器,也没有容器映射进来的 <c>/dev/ttyS10</c>。做成封闭枚举,等于对这些用户说"本工具不支持你的设备"。
+    /// </para>
+    /// <para>手输值宿主不做校验:什么算合法只有协议自己知道;连不上时由 <c>ConnectAsync</c> 抛出可读的原因。</para>
+    /// </summary>
+    public bool AllowsCustomValue { get; init; }
 
     /// <summary>
     /// 是否为机密:为 <see langword="true" /> 时该值随口令一起**加密落盘**,
@@ -195,7 +234,29 @@ public enum ProtocolFeatures
     /// </para>
     /// <para>隐含 <see cref="AnonymousAccess" /> 的判定:没有凭据自然不能拿"没填"堵住连接按钮。</para>
     /// </summary>
-    NoCredentials = 1 << 6
+    NoCredentials = 1 << 6,
+
+    /// <summary>
+    /// 这个协议**没有网络端点**:宿主在连接配置页里收起"端口"那一栏。
+    /// <para>
+    /// 与 <see cref="Workspaces.WorkspaceFeatures.NoEndpoint" /> 同义同形 —— 那边给的是 SQLite
+    /// 这类"就是磁盘上一个文件"的连接类型,这边给的是串口。共同点是:目标不是一个 <c>host:port</c>,
+    /// 端口那格填什么都不会被用上,摆着只会让用户以为它有意义(还会留着上一个协议的残值)。
+    /// </para>
+    /// <para>
+    /// <b>只收端口,不收主机</b>:主机那一栏恰恰要留着装连接目标 —— 串口装设备名
+    /// (配 <see cref="ProtocolDescriptor.HostLabel" /> 改标成"串口设备",
+    /// 再用 <see cref="ProtocolDescriptor.HostKind" /> 渲染成可刷新的端口下拉)。
+    /// 这与 PuTTY 的做法一致:它的串口页正是把 "Host Name" 换成 "Serial line"。
+    /// 两栏一起收的话,用户就没有地方填设备了。
+    /// </para>
+    /// <para>
+    /// 这一位不影响端口的**取值**:描述符仍须给出 1–65535 的
+    /// <see cref="ProtocolDescriptor.DefaultPort" />,保存/连接按钮"端口在合法区间"那条判定也照旧成立 ——
+    /// 收起一栏不该顺手把按钮堵死。插件会照常收到那个数,忽略即可。
+    /// </para>
+    /// </summary>
+    NoEndpoint = 1 << 7
 }
 
 /// <summary>协议动作适用的条目类型。</summary>
@@ -253,6 +314,49 @@ public sealed record ProtocolDescriptor
 
     /// <summary>"主机"输入框的占位提示。</summary>
     public string? HostPlaceholder { get; init; }
+
+    /// <summary>
+    /// 用于向 <see cref="IProtocolChoiceSource.GetChoicesAsync" /> 指代"主机"那一栏的字段键。
+    /// 取一个 <see cref="ProtocolSettingField.Key" /> **不可能**取到的值(字段键在宿主侧限于
+    /// 普通标识符),这样动态候选项就只有一条取值路径,不必为主机栏另开一个接口。
+    /// </summary>
+    public const string HostFieldKey = "$host";
+
+    /// <summary>
+    /// "主机"那一栏的输入形态。默认 <see cref="ProtocolSettingKind.Text" />(一个文本框,与 SSH 一致)。
+    /// <para>
+    /// 只接受 <see cref="ProtocolSettingKind.Text" />、<see cref="ProtocolSettingKind.Choice" />、
+    /// <see cref="ProtocolSettingKind.DynamicChoice" /> 三种;其余形态宿主按 Text 处理
+    /// (口令化一个主机名、把它做成复选框都没有意义)。
+    /// </para>
+    /// <para>
+    /// 为什么值得为这一栏开个口子:对串口来说"主机"就是**设备**,而设备是可枚举、且会热插拔的。
+    /// 让用户对着一个空文本框去回忆自己的 CH340 这次被分到了 COM3 还是 COM7,是把系统本来就知道的事
+    /// 推给用户 —— 市面上每一个串口工具都给的是下拉。
+    /// </para>
+    /// <para>
+    /// 取 <see cref="ProtocolSettingKind.DynamicChoice" /> 时,宿主渲染时以
+    /// <see cref="HostFieldKey" /> 调一次 <see cref="IProtocolChoiceSource.GetChoicesAsync" />,
+    /// 并在下拉旁给出刷新按钮。
+    /// </para>
+    /// </summary>
+    public ProtocolSettingKind HostKind { get; init; } = ProtocolSettingKind.Text;
+
+    /// <summary>
+    /// <see cref="HostKind" /> 为 <see cref="ProtocolSettingKind.Choice" /> 时主机栏的候选项;
+    /// 为 <see cref="ProtocolSettingKind.DynamicChoice" /> 时作兜底列表。其余形态忽略。
+    /// </summary>
+    public IReadOnlyList<ProtocolSettingChoice> HostChoices { get; init; } = [];
+
+    /// <summary>
+    /// 主机栏做成下拉时,是否允许手输列表以外的值(渲染成**可编辑**下拉)。
+    /// <para>
+    /// 动态下拉几乎总该置位:枚举不到的设备(没插的适配器、容器里映射进来的
+    /// <c>/dev/ttyS10</c>、还没装驱动的板子)必须仍然填得进去,而一条存着 <c>COM7</c> 的旧配置
+    /// 更不能因为"这次没枚举到"就被下拉改写成别的端口。
+    /// </para>
+    /// </summary>
+    public bool HostAllowsCustomValue { get; init; }
 
     /// <summary>"用户名"输入框的标签;留空即用宿主的"用户名"。</summary>
     public string? UsernameLabel { get; init; }

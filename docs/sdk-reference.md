@@ -131,7 +131,8 @@ DTO 与不透明 id),所以同一份插件源码在 `inProcess` 与 `isolated` �
 | 1.2 | `IRemoteTunnelApi`(裸字节双工流) | 用到就要(`1.2.0`) |
 | 1.3 | `ITerminalViewApi`(出借宿主终端控件) | 用到就要(`1.3.0`) |
 | 1.3.1 | 工作区**变体**:`WorkspaceVariant`、`VariantKey`/`Variants`、`NoCredentials`/`NoEndpoint` | 用到就要(`1.3.1`) |
-| **1.4** | `HostRegistry`(宿主自我登记,供 `vela-plugin` 定位安装与核对版本) | **不需要** —— 这是工具链面,插件代码不调用 |
+| 1.4 | `HostRegistry`(宿主自我登记,供 `vela-plugin` 定位安装与核对版本) | **不需要** —— 这是工具链面,插件代码不调用 |
+| **1.5** | 协议连接表单三件套:`ProtocolFeatures.NoEndpoint`(收起端口栏)、`ProtocolSettingKind.DynamicChoice` + `IProtocolChoiceSource`(候选项在表单打开时现取)、`AllowsCustomValue` / `HostKind` / `HostChoices` / `HostAllowsCustomValue`(可编辑下拉;主机栏也能做成下拉)。由串口插件驱动 —— 端口是热插拔设备,波特率有非标值。 | 用到就要(`1.5.0`) |
 
 ---
 

@@ -138,7 +138,8 @@ in [Packaging and Publishing §1.2](publishing.md). Three things bite most often
 | 1.2 | `IRemoteTunnelApi` (raw byte duplex stream) | Yes, if used (`1.2.0`) |
 | 1.3 | `ITerminalViewApi` (borrow the host terminal control) | Yes, if used (`1.3.0`) |
 | 1.3.1 | Workspace **variants**: `WorkspaceVariant`, `VariantKey`/`Variants`, `NoCredentials`/`NoEndpoint` | Yes, if used (`1.3.1`) |
-| **1.4** | `HostRegistry` (host self-registration for `vela-plugin`) | **No** — toolchain surface, plugin code never calls it |
+| 1.4 | `HostRegistry` (host self-registration for `vela-plugin`) | **No** — toolchain surface, plugin code never calls it |
+| **1.5** | Connection-form additions for protocols: `ProtocolFeatures.NoEndpoint` (hide the port column), `ProtocolSettingKind.DynamicChoice` + `IProtocolChoiceSource` (choices fetched when the form opens), `AllowsCustomValue` / `HostKind` / `HostChoices` / `HostAllowsCustomValue` (editable combo boxes; the host column can be a combo too). Driven by the serial plugin — ports are hot-plugged, baud rates have non-standard values. | Yes, if used (`1.5.0`) |
 
 ---
 
