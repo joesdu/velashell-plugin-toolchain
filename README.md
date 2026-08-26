@@ -18,10 +18,23 @@
 | `plugin-sdk/VelaShell.PluginSdk` | 契约程序集:插件入口、能力接口、`plugin.json` 清单模型、`.vpx` 容器格式 | NuGet `VelaShell.PluginSdk` |
 | `plugin-sdk/VelaShell.PluginSdk.Testing` | 测试替身:`TestPluginContext` 与各能力的内存实现,不起宿主也能测插件 | NuGet `VelaShell.PluginSdk.Testing` |
 | `plugin-sdk/VelaShell.PluginSdk.Build` | 插件工程**只需引用这一个包**:MSBuild targets + 打包器 + Avalonia 版本锁 | NuGet `VelaShell.PluginSdk.Build` |
-| `tools/VelaShell.Plugin.Cli` | `vela-plugin`:校验清单、打 `.vpx`、签名/验签、挂载到本机宿主调试 | NuGet `VelaShell.Plugin.Cli`(dotnet tool) |
+| `tools/VelaShell.Plugin.Cli` | `vela-plugin`:从插件商店装/升/卸插件、校验清单、打 `.vpx`、签名/验签、挂载到本机宿主调试 | NuGet `VelaShell.Plugin.Cli`(dotnet tool) |
 | `templates/` | `dotnet new` 模板:`velaplugin`(基础)/ `velaplugin-ui`(带 Avalonia 面板) | NuGet `VelaShell.Plugin.Templates` |
-| `tests/` | 契约测试:`.vpx` 容器格式与 `plugin.json` 清单解析 | — |
+| `tests/` | 契约测试(`.vpx` 容器格式、`plugin.json` 清单解析)与装包链路测试(签名策略、换目录、版本挑选) | — |
 | `scripts/` | `Set-Version.ps1`:把版本号写进仓库里所有落点(发版时由流水线自动跑) | — |
+
+## 快速上手(装别人的插件)
+
+```bash
+dotnet tool install -g VelaShell.Plugin.Cli
+vela-plugin search redis                    # 找
+vela-plugin install velashell.redis         # 装,然后重启 VelaShell
+vela-plugin update                          # 以后升级
+```
+
+包来自[插件商店](http://market.easilynet.top),落到 `~/.velashell/plugins/<id>/` ——
+与宿主"插件管理页 → 安装 .vpx…"同一个目录。装之前会核对整包摘要、容器摘要、签名与宿主
+兼容性;`--source` 可以指到自建商店。命令与取舍见 [`docs/cli.md`](docs/cli.md#2-从插件商店安装)。
 
 ## 快速上手(写自己的插件)
 

@@ -40,6 +40,11 @@ vela-plugin verify bin/vpx/acme.snippets-0.1.0.vpx
 
 | 命令 | 作用 |
 | --- | --- |
+| [`install`](#install) | 从[插件商店](http://market.easilynet.top)按 id 装,或装一个本地 `.vpx` |
+| [`uninstall`](#uninstall) | 删掉一个已安装插件的目录 |
+| [`update`](#update) | 把已安装插件升到商店上的新版 |
+| [`list`](#list) | 列出本机装了哪些插件、哪来的、签没签名 |
+| [`search`](#search) | 搜商店 |
 | [`dev init`](#dev-init) | 生成 IDE 启动配置:以调试器启动本机装的 VelaShell 并挂载本工程 |
 | [`dev run`](#dev-run) | 不开 IDE,直接用同样的参数拉起宿主 |
 | [`dev list` / `dev prune`](#dev-list--dev-prune) | 查看 / 清理全局登记的开发根 |
@@ -50,8 +55,7 @@ vela-plugin verify bin/vpx/acme.snippets-0.1.0.vpx
 | [`pack`](#pack) | 把产物目录打成 `.vpx` |
 | [`sign`](#sign) / [`verify`](#verify) | 给包签名 / 验签 |
 | [`keygen`](#keygen) | 生成 P-256 签名密钥对 |
-| [`info`](#info) / [`unpack`](#unpack) | 查看包头与清单 / 解包(排障) |
-| `install` | **禁用**:安装必须走宿主,否则绕过发布者授权与受保护安装收据 |
+| [`info`](#info) / [`unpack`](#unpack) | 查看包头与清单(或商店条目)/ 解包(排障) |
 
 全局约定:
 
@@ -62,7 +66,110 @@ vela-plugin verify bin/vpx/acme.snippets-0.1.0.vpx
 
 ---
 
-## 2. 开发内环
+## 2. 从插件商店安装
+
+```bash
+vela-plugin search redis                    # 找
+vela-plugin info velashell.redis            # 看:作者、许可、全部版本、兼容性
+vela-plugin install velashell.redis         # 装(商店上最新的**正式版**)
+vela-plugin list                            # 装了啥
+vela-plugin update                          # 都升到最新
+```
+
+包会落到 `~/.velashell/plugins/<id>/` —— 与宿主"插件管理页 → 安装 `.vpx`…"是**同一个目录**。
+**装完要重启 VelaShell** 才会加载。
+
+> **与管理页装包的唯一差别:没有事后防篡改。**
+> 管理页装完会落一份**受保护的安装收据**(内容哈希 + 完整性保护),此后目录里的文件被别的程序
+> 改过,宿主启动时会把插件标成 Invalid 并提示重装。那份收据的密钥与格式都在宿主进程里,
+> CLI 造不出来,所以经 CLI 装的插件没有这层保护。
+> 作为交换,**能在装之前做完的检查这里一条不少**:整包摘要对商店声明的值、容器自身的载荷摘要、
+> 签名验签、包内清单与所请求 id/版本一致、以及与本机宿主的 apiLevel / `minSdkVersion` /
+> `minHostVersion` 兼容性。要那层事后保护就走管理页;要一条命令装完就用这里。
+
+### `install`
+
+```bash
+vela-plugin install <id>[@<版本>]     # 从商店
+vela-plugin install <包.vpx>          # 从本地文件
+```
+
+参数**看着像路径**(含 `/`、`\`,或以 `.vpx` 结尾,或就是一个存在的文件)就当本地包,
+否则当商店 id。
+
+| 选项 | 说明 |
+| --- | --- |
+| `--version <v>` | 指定版本,等价于 `<id>@<版本>` |
+| `--pre` | 允许预发布版。**默认只装正式版** —— 发了个 preview 不该让所有人跟着升 |
+| `--source <url>` | 换一个商店(自建的)。等价环境变量 `VELA_PLUGIN_MARKET`,**参数优先** |
+| `--prefix <目录>` | 换安装根,默认 `~/.velashell/plugins` |
+| `--trust <指纹>` | 要求签名者指纹必须等于此值(`SHA256:…`,大小写不敏感) |
+| `--allow-unsigned` | 允许装未签名的包 |
+| `--force` | 同版本也重装 |
+| `--no-cache` | 忽略下载缓存(`~/.velashell/cache/vpx/`) |
+| `--download-only [目录]` | 只下载并校验,不安装 |
+
+**签名策略与宿主同一张表**:
+
+| 包的状态 | CLI 的行为 |
+| --- | --- |
+| 签名有效 | 装,并把公钥指纹打出来、记进安装记录 |
+| 未签名 | 交互终端里问一句 y/N;**非交互(CI、管道)一律拒装**,要装得显式给 `--allow-unsigned` |
+| 签名损坏 / 内容被改过 | **一律拒装**,没有绕过入口 |
+
+给了 `--trust` 时它**压过** `--allow-unsigned`:指纹对不上、或包压根没签名,都直接拒。
+这样 `--trust` 在 CI 里才是一句实话。
+
+装完的目录里会多一个 `.vela-install.json`,记着版本、来源、两个摘要、发布者指纹与安装时间。
+它是给 `list` / `update` 用的**普通文件**,任何本地进程都能改 —— 不要拿它当安全边界
+(那正是上面说的"受保护收据"与它的差别)。
+
+### `uninstall`
+
+```bash
+vela-plugin uninstall <id> [--prefix <目录>]
+```
+
+删目录。**插件在宿主库里的数据(KV / 机密 / 时序库)不会被清** —— 那些数据的加密与库锁都归
+宿主,只有管理页的卸载能清。重装同一个 id 会把数据接回去。
+
+### `update`
+
+```bash
+vela-plugin update                # 所有已装插件
+vela-plugin update <id>           # 只升一个
+vela-plugin update --check        # 只报告,不动手
+```
+
+按 id 去商店比版本。商店上没有的 id(手工放进去的、私有的)跳过,不算失败。
+某一个升级失败不会拦住其余的,全部跑完后用退出码汇报。
+`--pre` / `--source` / `--prefix` / `--trust` / `--allow-unsigned` 与 `install` 同义。
+
+### `list`
+
+```bash
+vela-plugin list [--prefix <目录>]
+```
+
+列安装根下的插件:id、版本、来源(商店域名 / 本地包 / 无安装记录)、发布者指纹。
+"无安装记录"就是手工拷进去的那种,CLI 不知道它哪来的。
+
+### `search`
+
+```bash
+vela-plugin search [关键词] [--page N] [--size N] [--source <url>]
+```
+
+不给关键词就列第一页。
+
+> **自建商店**:`--source` 或 `VELA_PLUGIN_MARKET` 指到你自己那份即可,它需要提供三个只读接口 ——
+> `GET /api/plugins?q=&page=&size=`、`GET /api/plugins/{id}`、
+> `GET /api/plugins/{id}/versions/{version}/download`(返回 `{url, fileSha256, payloadSha256, packageSize}`)。
+> 只放行 `http(s)`;直链走 HTTP 时会警告一句 —— 摘要仍然核,但没人能担保是谁发的。
+
+---
+
+## 3. 开发内环
 
 ### `dev init`
 
@@ -168,7 +275,7 @@ vela-plugin dev unlink bin/Debug/net11.0
 
 ---
 
-## 3. 环境体检
+## 4. 环境体检
 
 ### `hosts`
 
@@ -212,7 +319,7 @@ vela-plugin doctor [projectDir] [--host <…>] [--exe <…>]
 
 ---
 
-## 4. 清单与打包
+## 5. 清单与打包
 
 ### `validate`
 
@@ -271,12 +378,15 @@ vela-plugin keygen [-o <key.pem>] [--force]
 
 ```bash
 vela-plugin info   <pkg.vpx>          # 容器头、签名状态、清单摘要
+vela-plugin info   <id>               # 商店上那条:作者、许可、全部版本与兼容性
 vela-plugin unpack <pkg.vpx> [dir]    # 解包(带 zip-slip / 解压炸弹防护)
 ```
 
+`info` 的两种形态按参数长相区分,与 [`install`](#install) 同一套判定。
+
 ---
 
-## 5. 宿主侧的启动参数
+## 6. 宿主侧的启动参数
 
 `dev init` 写进启动配置的那几个参数,也可以手工使用;它们都有等价的环境变量,
 **参数优先**(参数跟着工程走,环境变量是机器级全局状态,同时开两个工程必然串味):
@@ -294,7 +404,7 @@ vela-plugin unpack <pkg.vpx> [dir]    # 解包(带 zip-slip / 解压炸弹防护
 
 ---
 
-## 6. 常见问题
+## 7. 常见问题
 
 **`No VelaShell installation is registered`**
 本机没启动过 VelaShell(或只用过便携版且从未启动)。启动一次即可,或 `dev init --exe <路径>`。

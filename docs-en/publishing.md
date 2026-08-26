@@ -155,8 +155,19 @@ The fingerprint is the only thing users can verify, and upgrade continuity depen
 
 The VelaShell plugin marketplace is at <http://market.easilynet.top>.
 
-> **Current state (2026-08): the client has no built-in marketplace client.** Users download the
-> `.vpx` from the marketplace page and install it from **Plugin manager → Install .vpx…**.
+Once listed, users have two ways to install your plugin:
+
+```bash
+vela-plugin install <your plugin id>       # command line, since SDK 1.5.0
+```
+
+Or download the `.vpx` from the marketplace page and pick it in **Plugin manager → Install .vpx…**.
+Both land in the same directory. The single difference: the manager also records a **protected
+installation receipt** for post-install tamper detection, which the CLI cannot produce (the key
+lives inside the host process) - in exchange the CLI verifies the file digest, the container
+digest, the signature, manifest consistency and host compatibility before writing anything.
+See the [CLI manual](cli.md#2-installing-from-the-marketplace).
+
 > The exact submission form/API belongs to the site; the list below is the material you need
 > regardless of its shape.
 
