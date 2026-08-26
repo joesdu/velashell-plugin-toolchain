@@ -41,9 +41,11 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Validating version $version"
 
-      # 版本号同步体检。发版时由 release.yml 自动写(scripts/Set-Version.ps1),但仓库自己
-      # 也得保持诚实:有人手改了 Directory.Build.props 却没动模板/文档,或者发版那次的版本同步 PR
-      # 一直没合 —— 两种情况都在这里显形,而不是等到下次有人照着过期文档抄版本号。
+      # 版本号同步体检。这是"仓库里那十来处版本号是否一致"的**唯一**守门人 ——
+      # release.yml 的 Stamp 步骤只改 runner 上的工作区,保证产物与 Release 标签一致,
+      # 但它不回写仓库(原 sync-main 任务已于 2026-08-26 删除)。所以两种漏改都靠这里显形:
+      # 有人手改了 Directory.Build.props 却没动模板/文档,或者发版前忘了跑 Set-Version.ps1。
+      # 红了就照它给的命令本地跑一遍,补一个 PR 合掉,而不是等到下次有人照着过期文档抄版本号。
       # 顺带核对「SDK 主版本 == VelaPluginApi.Level」这条纪律。
       - name: Version consistency check
         shell: pwsh

@@ -73,21 +73,23 @@ dotnet build VelaShell.Plugins.slnx -p:VelaSdkVersion=1.5.0-dev
 SDK 版本(`Directory.Build.props` 的 `VelaSdkVersion`)与**主程序版本解耦** ——
 主程序发 1.2.3 不代表插件契约变了,插件作者也不该为了跟版本号而重新编译。
 
-发版方式:**在 GitHub 上发布 Release**(标签形如 `v1.4.0`),流水线会把五个包推上 nuget.org。
+发版方式:**在 GitHub 上发布 Release**(标签形如 `v1.5.0`),流水线会把五个包推上 nuget.org。
 第一方插件的分发物不在这里发 —— 那是 [joesdu/velashell-plugins](https://github.com/joesdu/velashell-plugins)
 自己的 Release 流水线的事。
 
-版本号**不用手工改**:流水线从标签解析出版本后,第一件事就是跑
-[`scripts/Set-Version.ps1`](scripts/Set-Version.ps1),把它写进 `Directory.Build.props`、
+版本号**发版前在本地落好、随功能改动一起合进 `main`**:跑一次
+[`scripts/Set-Version.ps1`](scripts/Set-Version.ps1),它会把版本写进 `Directory.Build.props`、
 两个模板的 `template.json`、`VelaPluginApi.SdkVersion` 与四份文档的版本横幅 /
-`PackageReference` 片段。发布成功后**开一个 PR** 把改动回写 `main`
-(分支 `chore/version-<版本>`),等你手动合 —— main 开了分支保护也照常工作。
-本地也可以先跑一遍:
+`PackageReference` 片段 —— 十来处,一处都不用自己记。
 
 ```powershell
 pwsh scripts/Set-Version.ps1 1.5.0            # 落盘
 pwsh scripts/Set-Version.ps1 1.5.0 -Check     # 只报告(CI 每次 push/PR 都跑这个)
 ```
+
+流水线在构建之前也会按 Release 标签跑一遍同样的脚本,所以**产物版本号永远等于标签**,
+即便有人忘了上一步;但它只改 runner 上的工作区,**不回写仓库** —— 真忘了的话,
+`main` 上的版本同步体检会红,照它给的命令本地补一个 PR 即可。
 
 完整流程、版本号纪律(`AssemblyVersion` 主版本 == `apiLevel`)与 NuGet 可信发布的配置见
 [`docs/release-process.md`](docs/release-process.md)。
