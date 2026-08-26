@@ -13,67 +13,79 @@
 
 ## 一、怎么发
 
-**发 Release,不再打 `sdk-v*` 标签;版本号也不用再手工改。**
+**发 Release,不再打 `sdk-v*` 标签;版本号在合 `main` 之前用脚本一次落好。**
 
-发版只剩三步,外加事后合一个 PR:
+发版三步:
 
 1. **破坏性变更才需要**先手工把 `VelaPluginApi.Level` +1 —— "契约破没破"是人的判断,
    不是版本号能推出来的,脚本刻意不代改(但会核对,对不上就拒绝发版)。
-2. 合进 `main`。
+2. 本地跑一次版本号脚本,连同功能改动一起合进 `main`:
+
+   ```powershell
+   pwsh scripts/Set-Version.ps1 1.5.0
+   ```
+
+   它一次改完那十来处落点(`Directory.Build.props`、两个 `template.json`、
+   `VelaPluginApi.SdkVersion`、四份文档的版本横幅与 `PackageReference` 片段),
+   漏一处的后果各不相同、且大多不会在你手上暴露 —— 详见下方"版本号纪律"。
+
 3. 在 GitHub 上发 Release:
 
 ```
 GitHub → Releases → Draft a new release
-  Tag:    v1.4.0          ← 版本号取自这里(去掉前导 v)
-  Title:  1.4.0
+  Tag:    v1.5.0          ← 版本号取自这里(去掉前导 v)
+  Title:  1.5.0
   Notes:  …
-  [ ] Set as a pre-release   ← 预发布版本(1.4.0-preview.1)勾上
+  [ ] Set as a pre-release   ← 预发布版本(1.5.0-preview.1)勾上
   Publish release
 ```
 
-4. 发布跑完后仓库里会多出一个 PR:`chore: 版本号同步到 <版本>`(分支
-   `chore/version-<版本>`)。内容就是那十来处版本号替换,**合掉它**。
-
-> 2026-08-21 之前还要手工改 `Directory.Build.props`、两个 `template.json`、
-> `VelaPluginApi.SdkVersion` 和四份文档共十来处版本号。现在这些由流水线
-> 从标签自动写入,再以 PR 的形式回写 `main`(见下面第 2 步与第 10 步)。
+> **2026-08-26:版本号回写 `main` 的 `sync-main` 任务已删除。** 发版本来就是
+> "改完合进 `main` → 在 Release 页面发布",版本号在第 2 步已经落定,回写在正常路径上
+> 永远是空操作 —— 为此常驻一个需要 `contents` + `pull-requests` 写权限的 job
+> (还得配 PAT 才能让它开的 PR 亮绿灯),不划算。忘了第 2 步的兜底改由 CI 的
+> **版本同步体检**(`Set-Version.ps1 -Check`,每次 push/PR 都跑)承担:它会在 `main` 上
+> 红一次,照它给的命令跑一遍再补一个 PR 即可。同时可选机密 `VERSION_SYNC_TOKEN`
+> 也一并作废,仓库机密里若还留着可以清掉。
 
 发布动作触发 [`.github/workflows/release.yml`](../.github/workflows/release.yml),它按顺序做:
 
 1. 解析并**校验**版本号 —— 标签必须能化成合法 SemVer。这一步是硬拦截:
    nuget.org 的包版本**不可删除、不可覆盖**,标签打错一次就永久占掉一个版本号。
-2. **把版本号写进仓库**:跑 [`scripts/Set-Version.ps1`](../scripts/Set-Version.ps1),
+2. **把版本号写进 runner 上的工作区**:跑 [`scripts/Set-Version.ps1`](../scripts/Set-Version.ps1),
    把标签里那个版本落到 `Directory.Build.props`、两个模板的 `template.json`、
    `VelaPluginApi.SdkVersion` 以及四份文档的版本横幅/`PackageReference` 片段
    (详见下方"版本号纪律")。放在构建之前的第一步,产物因此**永远与标签一致**,
    与仓库里当时提交了什么无关。
+   正常路径上这一步是**空操作**(上面第 2 步已经把版本号落进 `main` 了);
+   留着它是为了不正常的那次 —— 有人忘了改,或者标签填的版本与 `main` 里的不一致。
+   它**只改工作区、不回写仓库**;真的落后了,`git diff --stat` 会把它打出来,
+   `main` 上的 CI 版本同步体检也会同时红。
 3. 从 `STRONG_NAME_KEY` 机密还原 `VelaShell.snk`。
 4. 跑全量测试(`-c Debug`,理由见下方"为什么测试必须 Debug")。
 5. `dotnet pack` 五个包,版本经 `-p:VelaSdkVersion=` 覆盖。
 6. **模板端到端冒烟**:装模板 → 生成工程 → 还原 → 构建 → 出 `.vpx` → 用刚打出的
    CLI 读回容器 → 确认共享程序集没漏进插件输出目录。
 7. NuGet 可信发布换密钥 → 推送五个包。
-8. `sync-main` 任务把第 2 步那些改动**以 PR 的形式回写 main**,分支 `chore/version-<版本>`,
-    等你手动合。单独一个 job:上面的工作区检出在标签上、且已被构建产物弄脏,在那里切 main
-    会把两者搅在一起;这里从干净的 main 重跑一遍脚本,结果逐字节相同 —— 脚本是纯函数。
-    分支名由版本号决定,所以手动补跑同一个标签会**刷新同一个 PR**,不会攒出一堆。
-    整段失败(权限、网络等)降级为**警告**而不是失败 —— 包已经在 nuget.org 上了,
-    那是既成事实,不该把一次成功的发布显示成红的。此时按提示在本地跑一遍脚本自行提 PR 即可。
+
+整条流水线**不写仓库**:工作流级 `permissions` 只有 `contents: read` 加
+Trusted Publishing 需要的 `id-token: write`。
 
 手动兜底:Actions 页面 → Release → Run workflow,填标签即可补跑
 (推送用 `--skip-duplicate`、上传用 `--clobber`,重复跑幂等)。勾 `dryRun` 只验不推。
 
-### 版本同步 PR 与 CI(可选的 `VERSION_SYNC_TOKEN`)
+### 忘了在发版前落版本号怎么办
 
-`sync-main` 默认用 `GITHUB_TOKEN` 开 PR。GitHub 有一条防工作流自循环的既定规则:
-**用 `GITHUB_TOKEN` 开的 PR 不会触发 CI**,所以那个 PR 上是空的检查列表。
+包不受影响 —— 上面第 2 步按标签盖过版本号了,nuget.org 上那五个包的版本一定等于标签。
+受影响的只有仓库自己:`main` 里的版本号还停在上一版,CI 的版本同步体检会红。补法:
 
-不配也是安全的 —— 那条 PR 的内容是纯版本号替换,且刚在上面的发布里全量构建、测试、
-模板端到端冒烟过一遍;合并时 `main` 上的 push 由你的账号触发,CI 会正常跑。
+```powershell
+git switch -c chore/version-1.5.0 main
+pwsh scripts/Set-Version.ps1 1.5.0
+git commit -am "chore: 版本号同步到 1.5.0"
+```
 
-想让 PR 本身也亮绿灯(比如 main 的分支保护要求"必须有通过的检查才能合"),
-配一个仓库机密 `VERSION_SYNC_TOKEN`:一把有 `contents: write` + `pull requests: write`
-权限的细粒度 PAT 即可,工作流会自动优先用它。
+推上去提个 PR 合掉即可,内容是纯版本号替换。
 
 ### 从旧的打标签方式迁移过来的注意点
 
@@ -183,8 +195,9 @@ pwsh scripts/Set-Version.ps1 1.5.0 -Check     # 只报告,不同步就退出码 
 * **保留各文件原有的 BOM 状态**(`.cs` 带、`.props/.json/.md` 不带),否则 diff 里会多出
   一堆与版本号无关的整文件改动。
 
-CI(`ci.yml`)每次 push/PR 都会跑一遍 `-Check`:有人手改了 `Directory.Build.props` 却没动
-模板和文档,或者发版那次的版本同步 PR 一直没合,都会在这里显形。
+CI(`ci.yml`)每次 push/PR 都会跑一遍 `-Check`。删掉 `sync-main` 之后,这是"仓库里那十来处
+版本号是否一致"的**唯一**守门人:有人手改了 `Directory.Build.props` 却没动模板和文档,
+或者发版前忘了跑一遍脚本,都会在这里显形。
 
 ## 四、和主仓库的联动
 

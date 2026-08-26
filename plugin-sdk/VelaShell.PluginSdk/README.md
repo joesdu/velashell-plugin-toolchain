@@ -41,9 +41,11 @@
 - 合进 main
 - 在 GitHub 上发布 Release，标签 `v<版本>`（2026-08-21 起不再用 `sdk-v*` 标签）
 
-版本号**不用手工改**：流水线解析出标签后第一件事就是跑
+版本号在**合进 main 之前**用脚本落好：跑一次
 [`scripts/Set-Version.ps1`](../../scripts/Set-Version.ps1)，把它写进 `Directory.Build.props`、
-两个模板的 `template.json`、本目录的 `VelaPluginApi.SdkVersion` 以及四份文档，
-发布成功后开一个 PR 回写 main（分支 `chore/version-<版本>`），等你手动合。想先验一遍不推送，用 workflow_dispatch 勾 dryRun。
+两个模板的 `template.json`、本目录的 `VelaPluginApi.SdkVersion` 以及四份文档。
+流水线在构建之前也会按标签跑一遍同样的脚本，所以产物版本号永远等于标签；但它只改 runner 的
+工作区、**不回写仓库**，忘了落版本号的话由 CI 的版本同步体检兜底。
+想先验一遍不推送，用 workflow_dispatch 勾 dryRun。
 
 完整流程与 nuget.org 可信发布的配置见 [docs/release-process.md](../../docs/release-process.md)。

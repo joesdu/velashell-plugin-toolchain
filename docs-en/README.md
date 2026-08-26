@@ -5,7 +5,7 @@ Everything you need to write a VelaShell plugin. Chinese originals live in [`../
 | Document | Contents |
 | --- | --- |
 | [dev-guide.md](dev-guide.md) | **Development guide**: quick start, manifest, lifecycle, capability APIs, isolation modes, testing, deployment, performance discipline |
-| [cli.md](cli.md) | **`vela-plugin` manual**: dev inner loop (`dev init`), `doctor`, validate/pack/sign, host launch arguments |
+| [cli.md](cli.md) | **`vela-plugin` manual**: install/update/remove from the marketplace (`install` / `update` / `list`), dev inner loop (`dev init`), `doctor`, validate/pack/sign, host launch arguments |
 | [publishing.md](publishing.md) | **Packaging and publishing**: Release builds, `.vpx`, signing and trust, publishing to the plugin market, CI packaging |
 | [sdk-reference.md](sdk-reference.md) | **SDK reference**: package layout, entry contract, capability domains, SDK version history, test doubles, loading model |
 

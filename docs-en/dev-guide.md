@@ -79,7 +79,7 @@ dotnet build -c Release -t:PackVpx               # → bin/vpx/acme.snippets-0.1
 The generated `.csproj` has a single dependency:
 
 ```xml
-<PackageReference Include="VelaShell.PluginSdk.Build" Version="1.4.0" />
+<PackageReference Include="VelaShell.PluginSdk.Build" Version="1.5.0" />
 ```
 
 That one package brings everything a plugin project needs: the `VelaShell.PluginSdk` contract assembly, **Avalonia pinned to exactly the host's version** (including its AXAML compiler), `EnableDynamicLoading`, `plugin.json` copied to the output, shared assemblies kept out of the plugin directory, build-time manifest validation, and the `PackVpx` target. Do **not** reference `VelaShell.PluginSdk` or `Avalonia` separately: a version mismatch fails the build with `VELA1001` instead of surfacing at runtime as a cross-load-context cast failure on the user's machine.
@@ -94,11 +94,21 @@ That one package brings everything a plugin project needs: the `VelaShell.Plugin
 
 > **The SDK is not a dotnet tool.** All three `VelaShell.PluginSdk*` packages are ordinary NuGet packages consumed via `PackageReference`; only `vela-plugin` (`VelaShell.Plugin.Cli`) is a dotnet tool. And **packing does not require installing it** — the packer ships inside `VelaShell.PluginSdk.Build`, so `dotnet build -t:PackVpx` works out of the box. Install the global tool to validate, sign, inspect packages, run `vela-plugin doctor`, or set up the development inner loop (`vela-plugin dev init`) outside a build.
 
-**Method 1: `.vpx` package (recommended)**. Sidebar plugin icon → Plugin Management page → select the file with "Install .vpx…" (validates the container and manifest, guards against zip slip and zip bombs, extracts into the user directory, replaces the old version for the same id, and activates according to the activation policy). The command-line equivalent is `vela-plugin install <package>`. Uninstallation is also a one-click operation on the management page (deletes the directory and clears database data).
+**Method 1: from the plugin marketplace (least effort)**.
+
+```bash
+vela-plugin install velashell.redis      # since SDK 1.5.0
+```
+
+Fetches the package by id from the [marketplace](http://market.easilynet.top), checks its digests and signature, and extracts it into `~/.velashell/plugins/<id>/`; restart the host to load it. `search` / `list` / `update` / `uninstall` round it out — see the [CLI manual](cli.md#2-installing-from-the-marketplace).
+
+**Method 2: `.vpx` package**. Sidebar plugin icon → Plugin Management page → select the file with "Install .vpx…" (validates the container and manifest, guards against zip slip and zip bombs, extracts into the user directory, replaces the old version for the same id, and activates according to the activation policy). The command-line equivalent is `vela-plugin install <package.vpx>`. Uninstallation is also a one-click operation on the management page (deletes the directory and clears database data).
+
+> The management page and the CLI write to the **same directory**. The only difference is that the management page also records a protected installation receipt for post-install tamper detection; the CLI cannot produce that receipt, but it performs every pre-install check. The trade-off is spelled out in the CLI manual.
 
 `.vpx` is VelaShell's **own container format**, not a renamed zip — see §12 for the layout and signing.
 
-**Method 2: Place the directory directly**. Put the build output (entry DLL + deps.json + bundled dependencies + plugin.json) in:
+**Method 3: Place the directory directly**. Put the build output (entry DLL + deps.json + bundled dependencies + plugin.json) in:
 
 ```text
 ~/.velashell/plugins/<plugin id>/                    (Windows/Linux/macOS)
@@ -556,7 +566,7 @@ The host is a terminal application that is extremely sensitive to memory and lat
 | One process + IPC per plugin (02/04/05) | **Implemented** (`hostMode: "isolated"`, see §6): named pipes + lightweight RPC + heartbeat + automatic crash-restart backoff |
 | Permission system + Broker (06) | Not implemented: v1 targets first-party and self-installed plugins; installation implies trust |
 | UI contribution points / VelaUI (08) | Available: command-palette commands + full Avalonia panels (dockable tabs in inProcess; always separate card windows in isolated processes) + plugin management page. The VelaUI declarative tree is **not being pursued** by user decision; cross-process dock embedding is deprecated (see the notes in 08); sidebar/status-bar mounting points are deferred |
-| `.vpx` packaging / signing / store (03/10) | Not implemented: a directory is the plugin; the distribution system is explicitly deferred |
+| `.vpx` packaging / signing / store (03/10) | **Packaging and signing are implemented** (own container + ECDSA signatures, see §12); **the marketplace has a client**: `vela-plugin install/search/update/list/uninstall` against [market.easilynet.top](http://market.easilynet.top) or a self-hosted source (see the [CLI manual](cli.md#2-installing-from-the-marketplace)). **A marketplace UI inside the host is still future work** |
 | Activation events / lazy activation (03) | **Implemented**: `onStartup` / `onCommand:<id>` + `contributes.commands` placeholders; other event types (onSessionConnect/onFileOpen, etc.) are deferred |
 | Idle reclamation (04) | **Implemented** (isolated mode + `idlePolicy: "recyclable"`) |
 | secrets / clipboard capability domains (07) | **Implemented** (§5.10/§5.11; without a permission system, installation implies trust) |
@@ -628,8 +638,12 @@ The four verdicts and how the host acts on them:
 | `Invalid` | Signature block corrupt or verification failed | **Always rejected**, regardless of policy — that is tampering, which is far worse than "unsigned" |
 
 The trusted set and the strict switch live on `PluginManagerOptions` (`TrustedPackageKeys` /
-`RequireTrustedPackageSignature`) and are both off by default. A plugin registry and publisher
-verification remain future work per blueprint 10.
+`RequireTrustedPackageSignature`) and are both off by default.
+
+The command line is one notch stricter: `vela-plugin install` refuses unsigned packages when
+**non-interactive** (pass `--allow-unsigned` to install one anyway) and takes
+`--trust <fingerprint>` so "it must be signed by this publisher" can be written into CI.
+A marketplace UI inside the host, and publisher verification, remain future work per blueprint 10.
 
 ### 12.3 Other Install-Time Gates
 

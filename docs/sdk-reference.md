@@ -1,6 +1,6 @@
 # 插件 SDK 参考
 
-> 适用版本:**SDK 1.4.0 / apiLevel 1**
+> 适用版本:**SDK 1.5.0 / apiLevel 1**
 > 相关文档:[开发指南](dev-guide.md)(教程式) · [CLI 手册](cli.md) · [打包与发布](publishing.md)
 
 本篇是**面向查阅**的 SDK 全貌:包结构、契约表面、每个能力域能做什么/受什么限制、
@@ -19,7 +19,7 @@
 | `VelaShell.Plugin.Templates` | 开发者机器 | `dotnet new velaplugin` / `velaplugin-ui` |
 
 ```xml
-<PackageReference Include="VelaShell.PluginSdk.Build" Version="1.4.0" />
+<PackageReference Include="VelaShell.PluginSdk.Build" Version="1.5.0" />
 ```
 
 **不要**再单独引用 `VelaShell.PluginSdk` 或 `Avalonia` —— 版本对不上会在构建期直接报

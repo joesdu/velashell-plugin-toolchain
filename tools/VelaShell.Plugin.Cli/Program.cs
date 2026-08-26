@@ -15,7 +15,7 @@ namespace VelaShell.Plugin.Cli;
 /// <c>vela-plugin</c>:插件作者的命令行工具。所有与包格式、清单规则相关的逻辑都直接调用
 /// <c>VelaShell.PluginSdk</c> —— 与宿主装包走同一份实现,不存在"工具认、宿主不认"的缝。
 /// </summary>
-internal static class Program
+internal static partial class Program
 {
     private static int Main(string[] args)
     {
@@ -52,7 +52,11 @@ internal static class Program
             "keygen" => KeyGen(rest),
             "sign" => Sign(rest),
             "verify" => Verify(rest),
-            "install" => Install(rest),
+            "install" or "i" or "add" => Install(rest),
+            "uninstall" or "remove" or "rm" => Uninstall(rest),
+            "update" or "upgrade" => Update(rest),
+            "list" or "ls" => ListInstalled(rest),
+            "search" => Search(rest),
             "dev" => Dev(rest),
             "doctor" => Doctor(rest),
             "hosts" => Hosts(rest),
@@ -120,9 +124,20 @@ internal static class Program
         return 0;
     }
 
-    /// <summary>打印一个 .vpx 的头部信息与签名状态。</summary>
+    /// <summary>
+    /// 打印一个 .vpx 的头部信息与签名状态;参数不像个包文件时,当成商店 id 去查那边的详情。
+    /// 与 <c>install</c> 同一套判定,免得"装能用 id、看却只能用文件"。
+    /// </summary>
     private static int Info(string[] args)
     {
+        var options = CliOptions.Parse(args);
+        string target = options.Positional.FirstOrDefault()
+                        ?? throw new CliException(
+                            "Missing package or plugin id. Usage: vela-plugin info <package.vpx> | <id>");
+        if (!LooksLikeAPath(target))
+        {
+            return InfoFromMarketplace(target, options);
+        }
         string package = RequirePackagePath(args);
         VpxPackageInfo info = VpxContainer.ReadInfo(package);
         Console.WriteLine($"{Path.GetFileName(package)}");
@@ -156,7 +171,7 @@ internal static class Program
         using Stream payload = VpxContainer.OpenPayload(package);
         using var archive = new ZipArchive(payload, ZipArchiveMode.Read);
         Directory.CreateDirectory(destination);
-        ExtractZipSafely(archive, destination);
+        PluginInstaller.ExtractZipSafely(archive, destination);
         Console.WriteLine($"Unpacked to {destination}");
         return 0;
     }
@@ -240,13 +255,6 @@ internal static class Program
         Console.WriteLine($"payload  OK ({info.PayloadLength} bytes, sha256 {info.PayloadSha256})");
         Console.WriteLine($"signature {(expectedKey is null && state == VpxSignatureState.Trusted ? "Valid (publisher identity not checked)" : state.ToString())}");
         return state is VpxSignatureState.Invalid or VpxSignatureState.Untrusted ? 1 : 0;
-    }
-
-    /// <summary>安装必须由宿主完成，确保签名授权和受保护安装收据不可绕过。</summary>
-    private static int Install(string[] args)
-    {
-        _ = RequirePackagePath(args);
-        throw new CliException("Direct CLI installation is disabled because it would bypass publisher approval and the protected installation receipt. Install the package from VelaShell's plugin manager; use `vela-plugin dev init` for development builds.");
     }
 
     // ---- 开发内环(dev 子命令族) -------------------------------------------
@@ -756,19 +764,24 @@ internal static class Program
 
     private static int PrintVersion()
     {
-        // 打 InformationalVersion 而不是 AssemblyVersion:后者只随主版本动(它是绑定标识,
-        // 不是给人看的),打它会让每个补丁版本都自称 1.0.0.0。这里要的是包版本,含预发布后缀。
-        Console.WriteLine(typeof(Program).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? typeof(Program).Assembly.GetName().Version?.ToString()
-            ?? "unknown");
+        Console.WriteLine(ToolVersion);
         return 0;
     }
+
+    /// <summary>
+    /// 本工具的包版本。打 InformationalVersion 而不是 AssemblyVersion:后者只随主版本动
+    /// (它是绑定标识,不是给人看的),打它会让每个补丁版本都自称 1.0.0.0。
+    /// 这里要的是包版本,含预发布后缀。
+    /// </summary>
+    internal static string ToolVersion =>
+        typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(Program).Assembly.GetName().Version?.ToString()
+        ?? "unknown";
 
     // ---- 辅助 -------------------------------------------------------------
 
     /// <summary>VelaShell 的数据根目录,与宿主的 VelaShellStoragePaths 保持一致。</summary>
-    private static string DataRoot => Path.Combine(
+    internal static string DataRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".velashell");
 
     private static PluginManifest LoadManifest(string directory)
@@ -822,56 +835,9 @@ internal static class Program
         return key;
     }
 
-    private const int MaxUnpackEntries = 10_000;
-    private const long MaxUnpackedBytes = 512L * 1024 * 1024;
+    internal static void Error(string message) => Console.Error.WriteLine($"error: {message}");
 
-    private static void ExtractZipSafely(ZipArchive archive, string destination)
-    {
-        if (archive.Entries.Count > MaxUnpackEntries)
-        {
-            throw new CliException($"Package contains too many entries ({archive.Entries.Count}; limit {MaxUnpackEntries}).");
-        }
-        string root = Path.GetFullPath(destination + Path.DirectorySeparatorChar);
-        StringComparison pathComparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        long remaining = MaxUnpackedBytes;
-        byte[] buffer = new byte[64 * 1024];
-        foreach (ZipArchiveEntry entry in archive.Entries)
-        {
-            if (((entry.ExternalAttributes >> 16) & 0xF000) == 0xA000)
-            {
-                throw new CliException($"Package contains a symbolic link: {entry.FullName}");
-            }
-            string target = Path.GetFullPath(Path.Combine(destination, entry.FullName));
-            if (!target.StartsWith(root, pathComparison))
-            {
-                throw new CliException($"Package entry escapes the destination: {entry.FullName}");
-            }
-            if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
-            {
-                Directory.CreateDirectory(target);
-                continue;
-            }
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            using Stream source = entry.Open();
-            using FileStream output = File.Create(target);
-            int read;
-            while ((read = source.Read(buffer)) > 0)
-            {
-                remaining -= read;
-                if (remaining < 0)
-                {
-                    throw new CliException($"Package expands beyond the {MaxUnpackedBytes / (1024 * 1024)} MB limit.");
-                }
-                output.Write(buffer, 0, read);
-            }
-        }
-    }
-
-    private static void Error(string message) => Console.Error.WriteLine($"error: {message}");
-
-    private static void Warn(string message) => Console.Error.WriteLine($"warning: {message}");
+    internal static void Warn(string message) => Console.Error.WriteLine($"warning: {message}");
 
     private static void PrintUsage() => Console.WriteLine(
         """
@@ -880,13 +846,33 @@ internal static class Program
         USAGE
           vela-plugin <command> [arguments]
 
-        COMMANDS
+        PLUGINS
+          install <id>[@<ver>]  Install a plugin from the marketplace into ~/.velashell/plugins
+          install <pkg.vpx>     Install a local package instead
+                  --version     Version to install (same as <id>@<version>)
+                  --pre         Consider pre-release versions (default: stable only)
+                  --source      Marketplace base URL (env VELA_PLUGIN_MARKET)
+                  --prefix      Install root (default: ~/.velashell/plugins)
+                  --trust       Require this publisher fingerprint (SHA256:...)
+                  --allow-unsigned  Install a package that carries no signature
+                  --force       Reinstall even if that version is already installed
+                  --no-cache    Ignore the download cache
+                  --download-only [dir]  Fetch and verify the .vpx, do not install
+          uninstall <id>        Remove an installed plugin directory
+          update [<id>]         Install newer marketplace versions of installed plugins
+                  --check       Only report what is outdated
+                  --pre / --source / --prefix / --trust / --allow-unsigned
+          list                  Show installed plugins, their version and origin
+          search [text]         Search the marketplace
+                  --page / --size / --source
+
+        PACKAGING
           pack <dir>            Pack a plugin output directory into a .vpx package
               -o, --output      Output path (default: <id>-<version>.vpx next to <dir>)
               -k, --key         Sign with this PEM private key
                   --no-mask     Store the zip payload unmasked (diagnostics only)
           validate [dir]        Validate plugin.json and the entry assembly
-          info <pkg.vpx>        Show container header, signature and manifest
+          info <pkg.vpx>|<id>   Show a package's header and manifest, or a marketplace listing
           verify <pkg.vpx>      Verify payload digest and signature
               -k, --key         Base64 public key that the signature must match
           unpack <pkg.vpx> [dir]  Extract a package (diagnostics)
@@ -896,7 +882,6 @@ internal static class Program
           keygen                Create a P-256 signing key pair
               -o, --output      Key file path (default: velashell-plugin-key.pem)
                   --force       Overwrite an existing key file
-          install <pkg.vpx>     Disabled: install through VelaShell to record trust securely
 
         DEVELOPMENT
           dev init [projectDir] Write an IDE launch profile that starts the installed VelaShell
@@ -922,14 +907,25 @@ internal static class Program
           doctor [projectDir]   Check host, manifest, build output and launch profile
 
         EXAMPLES
+          vela-plugin search redis
+          vela-plugin install velashell.redis          # newest stable from the marketplace
+          vela-plugin install velashell.redis@1.4.0    # a specific version
+          vela-plugin list
+          vela-plugin update
+
           dotnet build -c Release
           vela-plugin pack bin/Release/net11.0 -k ~/keys/acme.pem
           vela-plugin dev init          # then press F5 in your IDE
           vela-plugin doctor
-        """);
 
-    /// <summary>可读的用法错误(与格式/清单错误一样只打印消息,不打印堆栈)。</summary>
-    private sealed class CliException(string message) : Exception(message);
+        NOTES
+          Installing writes to ~/.velashell/plugins/<id>/, the same directory the host's plugin
+          manager uses; restart VelaShell to load a newly installed plugin. Unlike the manager,
+          the CLI cannot write the host's protected installation receipt, so a CLI-installed
+          plugin has no post-install tamper detection - everything that can be checked before
+          installing (file digest, container digest, signature, manifest, host compatibility)
+          is checked here instead.
+        """);
 
     /// <summary>极简参数解析:<c>--name value</c> / <c>--flag</c> / 位置参数。</summary>
     private sealed class CliOptions
@@ -955,7 +951,8 @@ internal static class Program
             return options;
         }
 
-        public bool Has(string name) => _named.ContainsKey(name);
+        public bool Has(string name, string? alias = null) =>
+            _named.ContainsKey(name) || (alias is not null && _named.ContainsKey(alias));
 
         public string? Get(string name, string? alias = null) =>
             _named.TryGetValue(name, out string? value)

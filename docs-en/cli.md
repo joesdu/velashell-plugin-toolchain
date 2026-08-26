@@ -1,6 +1,6 @@
 # `vela-plugin` CLI Manual
 
-> Applies to VelaShell plugin SDK **1.4.0** (`vela-plugin --version` tells you what you have).
+> Applies to VelaShell plugin SDK **1.5.0** (`vela-plugin --version` tells you what you have).
 > See also: [Development Guide](dev-guide.md) · [Packaging and Publishing](publishing.md) · [SDK Reference](sdk-reference.md)
 
 `vela-plugin` is the plugin author's command-line tool. It calls the same implementation the
@@ -41,6 +41,11 @@ vela-plugin verify bin/vpx/acme.snippets-0.1.0.vpx
 
 | Command | Purpose |
 | --- | --- |
+| [`install`](#install) | Install by id from the [marketplace](http://market.easilynet.top), or install a local `.vpx` |
+| [`uninstall`](#uninstall) | Remove an installed plugin's directory |
+| [`update`](#update) | Move installed plugins up to newer marketplace versions |
+| [`list`](#list) | Show what is installed, where it came from, whether it is signed |
+| [`search`](#search) | Search the marketplace |
 | [`dev init`](#dev-init) | Write an IDE launch profile that starts the installed VelaShell with this plugin mounted |
 | [`dev run`](#dev-run) | Start the host with the same arguments, no IDE required |
 | [`dev list` / `dev prune`](#dev-list--dev-prune) | Inspect / clean the globally registered development roots |
@@ -51,8 +56,7 @@ vela-plugin verify bin/vpx/acme.snippets-0.1.0.vpx
 | [`pack`](#pack) | Pack an output directory into `.vpx` |
 | [`sign`](#sign) / [`verify`](#verify) | Sign / verify a package |
 | [`keygen`](#keygen) | Create a P-256 signing key pair |
-| [`info`](#info) / [`unpack`](#unpack) | Inspect the container header and manifest / extract (diagnostics) |
-| `install` | **Disabled**: installing must go through the host, otherwise publisher approval and the protected installation receipt are bypassed |
+| [`info`](#info) / [`unpack`](#unpack) | Inspect a package header and manifest (or a marketplace listing) / extract (diagnostics) |
 
 Conventions: exit code `0` on success, `1` on failure (readable errors go to stderr, prefixed
 `error:` / `warning:`). Relative paths are accepted and echoed back as absolute. Nothing needs
@@ -61,7 +65,117 @@ only `~/.velashell` and paths you name explicitly are touched.
 
 ---
 
-## 2. The development inner loop
+## 2. Installing from the marketplace
+
+```bash
+vela-plugin search redis                    # find
+vela-plugin info velashell.redis            # inspect: author, license, every version
+vela-plugin install velashell.redis         # install the newest stable version
+vela-plugin list                            # what is installed
+vela-plugin update                          # move everything up
+```
+
+Packages land in `~/.velashell/plugins/<id>/` - the same directory the host's
+"plugin manager -> Install .vpx…" uses. **Restart VelaShell** to load a newly installed plugin.
+
+> **The one difference from installing through the manager: no post-install tamper detection.**
+> The manager records a **protected installation receipt** (content hash plus integrity
+> protection); if anything later modifies the files, the host marks the plugin Invalid on
+> startup and asks for a reinstall. The key and format for that receipt live inside the host
+> process, so the CLI cannot produce one.
+> In exchange, **every check that can be made before installing is made here**: the file digest
+> against what the marketplace declares, the container's own payload digest, signature
+> verification, the packaged manifest matching the requested id and version, and apiLevel /
+> `minSdkVersion` / `minHostVersion` against the VelaShell installed on this machine.
+> Want the post-install protection? Use the manager. Want one command? Use this.
+
+### `install`
+
+```bash
+vela-plugin install <id>[@<version>]     # from the marketplace
+vela-plugin install <package.vpx>        # from a local file
+```
+
+An argument that **looks like a path** (contains `/` or `\`, ends in `.vpx`, or names an
+existing file) is treated as a local package; anything else is a marketplace id.
+
+| Option | Meaning |
+| --- | --- |
+| `--version <v>` | Version to install; same as `<id>@<version>` |
+| `--pre` | Consider pre-releases. **Stable only by default** - shipping a preview should not drag everyone along |
+| `--source <url>` | Point at a different (self-hosted) marketplace. Environment equivalent `VELA_PLUGIN_MARKET`; the option wins |
+| `--prefix <dir>` | Install root, default `~/.velashell/plugins` |
+| `--trust <fingerprint>` | Require the signer's fingerprint to equal this (`SHA256:…`, case-insensitive) |
+| `--allow-unsigned` | Allow a package that carries no signature |
+| `--force` | Reinstall even if that exact version is already installed |
+| `--no-cache` | Ignore the download cache (`~/.velashell/cache/vpx/`) |
+| `--download-only [dir]` | Fetch and verify only; do not install |
+
+**The signature policy is the host's policy:**
+
+| Package state | What the CLI does |
+| --- | --- |
+| Valid signature | Installs, prints the public-key fingerprint and records it |
+| Unsigned | Asks y/N on an interactive terminal; **always refuses when non-interactive** (CI, pipes) unless `--allow-unsigned` is given |
+| Broken signature / modified content | **Always refused**, with no override |
+
+When `--trust` is given it **overrules** `--allow-unsigned`: a mismatched fingerprint, or a
+package with no signature at all, is refused. That is what makes `--trust` mean something in CI.
+
+The installed directory gains a `.vela-install.json` recording the version, origin, both
+digests, the publisher fingerprint and the install time. It is an ordinary file that any local
+process can edit - it feeds `list` and `update`, and it is **not** a security boundary (that is
+precisely the difference from the protected receipt above).
+
+### `uninstall`
+
+```bash
+vela-plugin uninstall <id> [--prefix <dir>]
+```
+
+Removes the directory. **The plugin's data in the host's database (KV, secrets, time series) is
+kept** - its encryption and database lock belong to the host, so only the manager's uninstall
+can clear it. Reinstalling the same id picks the data back up.
+
+### `update`
+
+```bash
+vela-plugin update                # every installed plugin
+vela-plugin update <id>           # just one
+vela-plugin update --check        # report only
+```
+
+Compares versions by id. Ids the marketplace does not carry (hand-placed, private) are skipped
+rather than failed. One plugin failing does not stop the rest; the exit code reports the tally.
+`--pre` / `--source` / `--prefix` / `--trust` / `--allow-unsigned` mean what they do for `install`.
+
+### `list`
+
+```bash
+vela-plugin list [--prefix <dir>]
+```
+
+Lists the plugins under the install root: id, version, origin (marketplace host / local package
+/ no install record) and publisher fingerprint. "No install record" is a directory someone
+copied in by hand - the CLI has no idea where it came from.
+
+### `search`
+
+```bash
+vela-plugin search [text] [--page N] [--size N] [--source <url>]
+```
+
+With no text it lists the first page.
+
+> **Self-hosting a marketplace**: point `--source` or `VELA_PLUGIN_MARKET` at your own. It needs
+> three read-only endpoints: `GET /api/plugins?q=&page=&size=`, `GET /api/plugins/{id}` and
+> `GET /api/plugins/{id}/versions/{version}/download` (returning
+> `{url, fileSha256, payloadSha256, packageSize}`). Only `http(s)` is accepted; a plain-HTTP
+> download URL earns a warning - the digest is still checked, but nobody can vouch for who served it.
+
+---
+
+## 3. The development inner loop
 
 ### `dev init`
 
@@ -148,7 +262,7 @@ Which one to use:
 
 ---
 
-## 3. Environment checks
+## 4. Environment checks
 
 ### `hosts`
 
@@ -183,7 +297,7 @@ Exits with `1` when a blocking problem is found (fits in CI).
 
 ---
 
-## 4. Manifest and packaging
+## 5. Manifest and packaging
 
 ### `validate`
 
@@ -241,12 +355,15 @@ Windows); the public key and fingerprint are printed.
 
 ```bash
 vela-plugin info   <pkg.vpx>          # header, signature state, manifest summary
+vela-plugin info   <id>               # the marketplace listing: author, license, every version
 vela-plugin unpack <pkg.vpx> [dir]    # extract (with zip-slip and zip-bomb guards)
 ```
 
+`info` picks between the two by how the argument looks, exactly as [`install`](#install) does.
+
 ---
 
-## 5. Host-side launch arguments
+## 6. Host-side launch arguments
 
 The arguments `dev init` writes can also be used by hand. Each has an environment-variable
 equivalent, and **arguments win** (arguments travel with the project; environment variables are
@@ -265,7 +382,7 @@ are scanned **after** the regular plugin roots and first id wins.
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 **`No VelaShell installation is registered`** — VelaShell has never been started here. Start it
 once, or use `dev init --exe <path>`.

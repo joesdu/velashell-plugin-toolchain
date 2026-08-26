@@ -87,7 +87,7 @@ dotnet build -c Release -t:PackVpx               # → bin/vpx/acme.snippets-0.1
 生成的 `.csproj` 只有一行依赖:
 
 ```xml
-<PackageReference Include="VelaShell.PluginSdk.Build" Version="1.4.0" />
+<PackageReference Include="VelaShell.PluginSdk.Build" Version="1.5.0" />
 ```
 
 这一个包把插件工程需要的东西一并带到:契约程序集 `VelaShell.PluginSdk`、**与宿主版本
@@ -110,15 +110,27 @@ dotnet build -c Release -t:PackVpx               # → bin/vpx/acme.snippets-0.1
 > `dotnet build -t:PackVpx` 直接可用。装全局工具是为了在构建之外随手校验、签名、
 > 查看包内容、体检(`vela-plugin doctor`),以及配开发内环(`vela-plugin dev init`)。
 
-装上去有两种方式:
+装上去有三种方式:
 
-**方式一:`.vpx` 包(推荐)** —— 侧栏插件图标 → 插件管理页 → "安装 .vpx…" 选择文件即装
+**方式一:从插件商店装(最省事)**
+
+```bash
+vela-plugin install velashell.redis      # SDK 1.5.0 起
+```
+
+按 id 去[插件商店](http://market.easilynet.top)取包、核对摘要与签名、解进 `~/.velashell/plugins/<id>/`,
+重启宿主即加载。搭配 `search` / `list` / `update` / `uninstall`,详见 [CLI 手册](cli.md#2-从插件商店安装)。
+
+**方式二:`.vpx` 包** —— 侧栏插件图标 → 插件管理页 → "安装 .vpx…" 选择文件即装
 (校验容器与清单、zip-slip 与解压炸弹防护、解包进用户目录、同 id 覆盖旧版、按激活策略激活);
-命令行等价物是 `vela-plugin install <包>`。卸载同样在管理页一键完成(删目录 + 清 DB 数据)。
+命令行等价物是 `vela-plugin install <包.vpx>`。卸载同样在管理页一键完成(删目录 + 清 DB 数据)。
+
+> 管理页与命令行落到**同一个目录**,唯一差别是管理页会额外写一份受保护的安装收据做事后防篡改;
+> 命令行造不出那份收据,但装之前的检查一条不少。两边的取舍见 CLI 手册。
 
 `.vpx` 是 VelaShell 的**专属容器格式**,不是改了后缀的 zip —— 格式与签名见 §12。
 
-**方式二:直接放目录**——把构建输出(入口 dll + deps.json + 自带依赖 + plugin.json)放进:
+**方式三:直接放目录**——把构建输出(入口 dll + deps.json + 自带依赖 + plugin.json)放进:
 
 ```text
 ~/.velashell/plugins/<插件id>/                    (Windows/Linux/macOS)
@@ -963,7 +975,7 @@ public async Task Refresh_ListsContainers()
 | 每插件独立进程 + IPC(02/04/05) | **已实现**(`hostMode: "isolated"`,见 §6):命名管道 + 轻量 RPC + 心跳 + 崩溃退避自动重启 |
 | 权限系统 + Broker(06) | 未做:v1 面向第一方/自装插件,信任即安装 |
 | UI 贡献点 / VelaUI(08) | 已有:命令面板命令 + 完整 Avalonia 面板(inProcess 可停靠标签页;隔离进程一律独立卡片窗口)+ 插件管理页。VelaUI 声明式树按用户决策**不做**;跨进程 dock 嵌入弃用(见 08 注记);侧栏/状态栏挂载点待后续 |
-| `.vpx` 打包 / 签名 / 商店(03/10) | **打包与签名已实现**(专属容器 + ECDSA 签名,见 §12);**商店/插件源仍显式推迟** |
+| `.vpx` 打包 / 签名 / 商店(03/10) | **打包与签名已实现**(专属容器 + ECDSA 签名,见 §12);**商店已有客户端**:`vela-plugin install/search/update/list/uninstall` 走 [market.easilynet.top](http://market.easilynet.top) 或自建源(见 [CLI 手册](cli.md#2-从插件商店安装))。**宿主内置的商店界面仍未做** |
 | 激活事件 / 惰性激活(03) | **已实现**:`onStartup` / `onCommand:<id>` + `contributes.commands` 占位;其余事件类型(onSessionConnect/onFileOpen 等)待后续 |
 | 空闲回收(04) | **已实现**(隔离模式 + `idlePolicy: "recyclable"`) |
 | secrets / clipboard 能力域(07) | **已实现**(§5.10/§5.11;无权限系统,信任即安装口径) |
@@ -1030,8 +1042,11 @@ vela-plugin info   pkg.vpx                        # 看头部、签名状态与�
 | `Invalid` | 签名块损坏或验签失败 | **一律拒装**,不受策略宽松与否影响 —— 那是篡改,比"未签名"严重得多 |
 
 信任集合与强制开关在 `PluginManagerOptions`(`TrustedPackageKeys` /
-`RequireTrustedPackageSignature`),默认都不启用。插件源(registry)与发布者验证仍未做,
-按蓝图 10 分期。
+`RequireTrustedPackageSignature`),默认都不启用。
+
+命令行侧的口径更严一档:`vela-plugin install` 在**非交互**环境下拒装未签名包(要装得显式
+给 `--allow-unsigned`),并支持 `--trust <指纹>` 把"必须是这个人签的"写进 CI。宿主内置的
+商店界面与发布者验证仍未做,按蓝图 10 分期。
 
 ### 12.3 安装期的其它闸门
 

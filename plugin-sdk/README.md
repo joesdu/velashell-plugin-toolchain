@@ -37,9 +37,11 @@ VelaShell 插件开发 SDK 的源代码。对外以 NuGet 包分发,版本走 `V
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) 打全部五个包、
 跑全量测试与**模板端到端冒烟**,再推 nuget.org,并把第一方插件的分发物挂到该 Release。
 
-版本号**不用手工改**:流水线从标签解析出版本后,第一件事就是跑
-[`scripts/Set-Version.ps1`](../scripts/Set-Version.ps1) 把它写进 `Directory.Build.props`、
-两个模板的 `template.json`、`VelaPluginApi.SdkVersion` 与四份文档,发布成功后开一个 PR 回写 main、等你手动合。
+版本号**发版前在本地落好、随功能改动一起合进 main**:跑一次
+[`scripts/Set-Version.ps1`](../scripts/Set-Version.ps1),把版本写进 `Directory.Build.props`、
+两个模板的 `template.json`、`VelaPluginApi.SdkVersion` 与四份文档。流水线在构建之前也会按
+标签跑一遍同样的脚本(所以产物版本号永远等于标签),但只改 runner 的工作区、不回写仓库 ——
+忘了的话由 CI 的版本同步体检兜底。
 唯一还要人动手的是**破坏性变更时 `VelaPluginApi.Level` +1** —— 脚本会核对
 "SDK 主版本 == apiLevel",对不上就拒绝发版,但不代你做那个判断。
 

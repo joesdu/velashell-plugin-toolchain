@@ -31,4 +31,11 @@
     <ProjectReference Include="..\..\plugin-sdk\VelaShell.PluginSdk\VelaShell.PluginSdk.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 装包链路(签名策略、换目录、版本挑选)全是 internal,测试要看得见它们。
+         不带公钥是可以的:强名签名只开在 plugin-sdk/ 那一支(见 plugin-sdk/Directory.Build.props),
+         本工程 Debug/Release 都不签名,因此友元声明不需要公钥,Release 也不会因此炸 CS1726。 -->
+    <InternalsVisibleTo Include="VelaShell.Plugin.Cli.Tests" />
+  </ItemGroup>
+
 </Project>

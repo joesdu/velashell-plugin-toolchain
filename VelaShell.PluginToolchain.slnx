@@ -40,5 +40,6 @@
     <File Path="tests/Directory.Packages.props" />
     <File Path="tests/velashell.runsettings" />
     <Project Path="tests/VelaShell.PluginSdk.Tests/VelaShell.PluginSdk.Tests.csproj" />
+    <Project Path="tests/VelaShell.Plugin.Cli.Tests/VelaShell.Plugin.Cli.Tests.csproj" />
   </Folder>
 </Solution>
